@@ -14,4 +14,4 @@ unco: $(CMD_OBJS)
 	$(CC) -Wall $(CMD_OBJS) -o $@
 
 clean:
-	rm -f $(PROGS)
+	rm -f $(PROGS) $(DYLIB_OBJS) $(CMD_OBJS)

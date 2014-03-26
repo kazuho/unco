@@ -1,7 +1,10 @@
 #include <errno.h>
 #include <fcntl.h>
+#include <stdarg.h>
 #include <stdio.h>
+#include <stdlib.h>
 #include <string.h>
+#include <sys/param.h>
 #include <sys/stat.h>
 #include <unistd.h>
 #include "unco.h"
@@ -54,13 +57,54 @@ Error:
 void uncolog_init_fp(struct uncolog_fp *ufp)
 {
 	ufp->_fd = -1;
+	ufp->_default_open = NULL;
+	strcpy(ufp->_path, "/nonexistent");
 }
 
-int uncolog_open(struct uncolog_fp *ufp, const char* path, int (*default_open)(const char *, int, ...))
+void uncolog_set_error(struct uncolog_fp *ufp, const char *fmt, ...)
 {
-	if ((ufp->_fd = default_open(path, O_CREAT | O_WRONLY | O_TRUNC, 0600)) == -1) {
+	va_list arg;
+	va_start(arg, fmt);
+	if (ufp->_fd != -1) {
+		vfprintf(stderr, fmt, arg);
+	}
+	va_end(arg);
+
+	errorclose(ufp);
+}
+
+int uncolog_open(struct uncolog_fp *ufp, const char* path, int (*default_open)(const char *, int, ...), int (*default_mkdir)(const char *, mode_t))
+{
+	int logfd;
+	char logfn[PATH_MAX];
+
+	// reset
+	uncolog_init_fp(ufp);
+
+	if (strlen(path) >= PATH_MAX - 20) {
+		fprintf(stderr, "unco:given path is too long:%s\n", path);
 		return -1;
 	}
+
+	// create dir
+	if (default_mkdir(path, 0700) == 0 || errno == EEXIST) {
+		// ok
+	} else {
+		fprintf(stderr, "unco:failed create dir:%s:%d\n", path, errno);
+		return -1;
+	}
+	// create log
+	snprintf(logfn, sizeof(logfn), "%s/log", path);
+	if ((logfd = default_open(logfn, O_CREAT | O_WRONLY | O_APPEND, 0600)) == -1) {
+		fprintf(stderr, "unco:failed to create file:%s:%d\n", logfn, errno);
+		rmdir(path);
+		return -1;
+	}
+
+	// success, setup ufp
+	ufp->_fd = logfd;
+	ufp->_default_open = default_open;
+	strcpy(ufp->_path, path);
 
 	return 0;
 }
@@ -94,16 +138,36 @@ int uncolog_write_argbuf(struct uncolog_fp* ufp, const void* data, size_t len)
 	return 0;
 }
 
-int uncolog_write_argfile(struct uncolog_fp* ufp, const char* abspath, int fd)
+int uncolog_write_argfn(struct uncolog_fp *ufp, const char *path)
+{
+	char cwd[PATH_MAX], abspath[PATH_MAX * 2];
+
+	if (ufp->_fd == -1)
+		return -1;
+
+	/* change path to absolute
+	 * Cannot use realpath since it resolves symlinks, since the function needs
+	 * to support non-existent filenames.  Also, patterns like "foo/.." should
+	 * be preserved since it might not point back if foo is a symlink.
+	 */
+	if (path[0] != '/') {
+		getcwd(cwd, sizeof(cwd));
+		if (strlen(cwd) + 1 + strlen(path) > sizeof(abspath) - 1) {
+			fprintf(stderr, "unco:given path is too long:%s/%s\n", cwd, path);
+		}
+		sprintf(abspath, "%s/%s", cwd, path);
+		path = abspath;
+	}
+
+	return uncolog_write_argbuf(ufp, path, strlen(path));
+}
+
+int uncolog_write_argfd(struct uncolog_fp* ufp, int fd)
 {
 	struct stat st;
 	ssize_t rret;
 	size_t off, rlen;
 	char readbuf[4096];
-
-	// write fn
-	if (uncolog_write_argbuf(ufp, abspath, strlen(abspath)) != 0)
-		return -1;
 
 	// write attributes
 	fstat(fd, &st); // TODO need to check error?
@@ -149,10 +213,25 @@ int uncolog_write_argfile(struct uncolog_fp* ufp, const char* abspath, int fd)
 	return 0;
 
 SizeChangeError:
-	fprintf(stderr, "unco:file altered during backup:%s:%d\n", abspath, errno);
+	fprintf(stderr, "unco:file altered during backup:%d\n", errno);
 	return errorclose(ufp);
 
 ReadError:
-	fprintf(stderr, "unco:failed to read file for backup:%s:%d\n", abspath, errno);
+	fprintf(stderr, "unco:failed to read file for backup:%d\n", errno);
 	return errorclose(ufp);
+}
+
+int uncolog_get_linkname(struct uncolog_fp *ufp, char *link)
+{
+	unsigned id;
+	struct stat st;
+
+	if (ufp->_fd == -1)
+		return -1;
+
+	for (id = 0; ; ++id) {
+		snprintf(link, PATH_MAX, "%s/l%08x", ufp->_path, id);
+		if (stat(link, &st) != 0)
+			return 0;
+	}
 }

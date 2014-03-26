@@ -1,12 +1,17 @@
 PROGS=unco.dylib unco
+DYLIB_OBJS=logger.o preload.o
+CMD_OBJS=cmd.o
+
+.c.o:
+	$(CC) -Wall -c $<
 
 all: $(PROGS)
 
-unco.dylib: src/preload.c
-	$(CC) -Wall -ldl -dynamiclib $< -o $@
+unco.dylib: $(DYLIB_OBJS)
+	$(CC) -Wall -ldl -dynamiclib $(DYLIB_OBJS) -o $@
 
-unco: src/cmd.c
-	$(CC) -Wall $< -o $@
+unco: $(CMD_OBJS)
+	$(CC) -Wall $(CMD_OBJS) -o $@
 
 clean:
 	rm -f $(PROGS)

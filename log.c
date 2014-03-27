@@ -11,7 +11,7 @@
 #include <unistd.h>
 #include "unco.h"
 
-static int errorclose(struct uncolog_fp* ufp)
+static int errorclose(struct uncolog_fp *ufp)
 {
 	if (ufp->_fd != -1) {
 		close(ufp->_fd);
@@ -20,7 +20,7 @@ static int errorclose(struct uncolog_fp* ufp)
 	return -1;
 }
 
-static int safewrite(struct uncolog_fp *ufp, const void* data, size_t len)
+static int safewrite(struct uncolog_fp *ufp, const void *data, size_t len)
 {
 	if (ufp->_fd == -1) {
 		return -1;
@@ -32,7 +32,7 @@ static int safewrite(struct uncolog_fp *ufp, const void* data, size_t len)
 	return 0;
 }
 
-static int read_short_line(struct uncolog_fp* ufp, char *buf, size_t sz)
+static int read_short_line(struct uncolog_fp *ufp, char *buf, size_t sz)
 {
 	char *lf;
 	ssize_t rlen;
@@ -85,7 +85,7 @@ void uncolog_set_error(struct uncolog_fp *ufp, const char *fmt, ...)
 	errorclose(ufp);
 }
 
-int uncolog_open(struct uncolog_fp *ufp, const char* path, int mode, int (*default_open)(const char *, int, ...), int (*default_mkdir)(const char *, mode_t))
+int uncolog_open(struct uncolog_fp *ufp, const char *path, int mode, int (*default_open)(const char *, int, ...), int (*default_mkdir)(const char *, mode_t))
 {
 	int oflag = 0, logfd;
 	char logfn[PATH_MAX];
@@ -163,7 +163,7 @@ int uncolog_write_action(struct uncolog_fp *ufp, const char *action, int argc)
 
 int uncolog_read_action(struct uncolog_fp *ufp, char *action, int *argc)
 {
-	char buf[256], * colon;
+	char buf[256], *colon;
 
 	if (read_short_line(ufp, buf, sizeof(buf)) != 0)
 		return -1;
@@ -177,7 +177,7 @@ int uncolog_read_action(struct uncolog_fp *ufp, char *action, int *argc)
 	return 0;
 }
 
-int uncolog_write_argn(struct uncolog_fp* ufp, off_t n)
+int uncolog_write_argn(struct uncolog_fp *ufp, off_t n)
 {
 	char buf[32];
 
@@ -198,7 +198,7 @@ int uncolog_read_argn(struct uncolog_fp *ufp, off_t *n)
 	return 0;
 }
 
-int uncolog_write_argbuf(struct uncolog_fp* ufp, const void* data, size_t len)
+int uncolog_write_argbuf(struct uncolog_fp *ufp, const void *data, size_t len)
 {
 	if (uncolog_write_argn(ufp, len) != 0
 		|| safewrite(ufp, data ,len) != 0

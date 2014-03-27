@@ -46,7 +46,7 @@ int unco_copyfd(int srcfd, int dstfd)
 	return rret;
 }
 
-int unco_utimes(int fd, const struct stat* st, int (*futimes)(int, const struct timeval times[2]))
+int unco_utimes(int fd, const struct stat *st, int (*futimes)(int, const struct timeval times[2]))
 {
 	struct timeval times[2];
 

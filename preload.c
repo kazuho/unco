@@ -65,7 +65,7 @@ Error:
 	return &_log_fp;
 }
 
-static int backup_file(struct uncolog_fp* ufp, int srcfd, const char *srcpath)
+static int backup_file(struct uncolog_fp *ufp, int srcfd, const char *srcpath)
 {
 	struct stat st;
 	char linkfn[PATH_MAX];
@@ -105,7 +105,7 @@ Error:
 	return -1;
 }
 
-static void before_writeopen(const char* path, int oflag)
+static void before_writeopen(const char *path, int oflag)
 {
 	int cur_fd;
 
@@ -142,7 +142,7 @@ extern RetType Fn Args { \
 	Body \
 }
 
-WRAP(open, int, (const char* path, int oflag, ...), {
+WRAP(open, int, (const char *path, int oflag, ...), {
 	va_list arg;
 	mode_t mode = 0;
 
@@ -158,7 +158,7 @@ WRAP(open, int, (const char* path, int oflag, ...), {
 	return orig(path, oflag, mode);
 })
 
-WRAP(fopen, FILE*, (const char* path, const char* mode), {
+WRAP(fopen, FILE*, (const char *path, const char *mode), {
 	if (strchr(mode, 'w') != NULL || strchr(mode, 'a') != NULL) {
 		before_writeopen(path, 0);
 	}

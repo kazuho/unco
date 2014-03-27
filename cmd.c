@@ -189,7 +189,7 @@ Exit:
 	return ret;
 }
 
-static int consume_log(const char *logpath, struct script** script)
+static int consume_log(const char *logpath, struct script **script)
 {
 	struct uncolog_fp _ufp, *ufp = &_ufp;
 	char action[256];

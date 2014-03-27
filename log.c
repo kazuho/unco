@@ -1,4 +1,5 @@
 #include <assert.h>
+#include <dirent.h>
 #include <errno.h>
 #include <fcntl.h>
 #include <stdarg.h>
@@ -288,4 +289,38 @@ int uncolog_get_linkname(struct uncolog_fp *ufp, char *link)
 		if (stat(link, &st) != 0)
 			return 0;
 	}
+}
+
+int uncolog_delete(const char *path, int force)
+{
+	DIR *dp;
+	struct dirent *ent;
+	char fnbuf[PATH_MAX];
+	int ret = -1;
+
+	if ((dp = opendir(path)) == NULL) {
+		if (force)
+			ret = 0;
+		else
+			fprintf(stderr, "unco:could not find unco log at:%s:%d\n", path, errno);
+		goto Exit;
+	}
+	while ((ent = readdir(dp)) != NULL) {
+		if (strcmp(ent->d_name, ".") == 0
+			|| strcmp(ent->d_name, "..") == 0) {
+			// skip
+		} else {
+			snprintf(fnbuf, sizeof(fnbuf), "%s/%s", path, ent->d_name);
+			if (unlink(fnbuf) != 0) {
+				fprintf(stderr, "unco:failed to unlink file:%s:%d\n", fnbuf, errno);
+				goto Exit;
+			}
+		}
+	}
+
+	ret = 0;
+Exit:
+	if (dp != NULL)
+		closedir(dp);
+	return ret;
 }

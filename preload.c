@@ -30,22 +30,38 @@ static void init_defaults()
 
 static struct uncolog_fp *log_fp()
 {
-	char logfn[PATH_MAX];
-	char *home;
+	char *logfn, *env, cwd[PATH_MAX], fnbuf[PATH_MAX];
 
 	if (_log_is_open)
 		return &_log_fp;
 	_log_is_open = 1; // always set to true, and the error state is handled within _log_fp
 
-	// open log
-	if ((home = getenv("HOME")) == NULL) {
-		fprintf(stderr, "$HOME is not set\n");
-		uncolog_init_fp(&_log_fp);
-		return &_log_fp;
+	// determine the filename
+	if ((env = getenv("UNCO_LOG")) != NULL) {
+		if (env[0] == '/') {
+			logfn = env;
+		} else {
+			if (getcwd(cwd, sizeof(cwd)) == NULL) {
+				perror("unco:could not obtain cwd");
+				goto Error;
+			}
+			snprintf(fnbuf, sizeof(fnbuf), "%s/%s", cwd, env);
+			logfn = fnbuf;
+		}
+	} else {
+		if ((env = getenv("HOME")) == NULL) {
+			fprintf(stderr, "unco:$HOME is not set\n");
+			goto Error;
+		}
+		snprintf(fnbuf, sizeof(fnbuf), "%s/.unco-log", env);
+		logfn = fnbuf;
 	}
-	snprintf(logfn, sizeof(logfn), "%s/.unco-log", home);
-	uncolog_open(&_log_fp, logfn, 'a', default_open, default_mkdir);
 
+	// open and return
+	uncolog_open(&_log_fp, logfn, 'a', default_open, default_mkdir);
+	return &_log_fp;
+Error:
+	uncolog_init_fp(&_log_fp);
 	return &_log_fp;
 }
 

@@ -30,6 +30,8 @@ int uncolog_read_action(struct uncolog_fp *ufp, char *action, int *argc);
 int uncolog_read_argn(struct uncolog_fp *ufp, off_t* n);
 void *uncolog_read_argbuf(struct uncolog_fp *ufp, size_t *sz);
 
+int uncolog_delete(const char *path, int force);
+
 ssize_t unco_read_nosig(int fd, void *data, size_t len);
 int unco_full_write(int fd, const void *data, size_t len);
 int unco_copyfd(int srcfd, int dstfd);

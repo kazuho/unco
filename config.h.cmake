@@ -1,1 +1,2 @@
+#define UNCO_VERSION "@serial@"
 #define WITH_LIBDIR "@CMAKE_INSTALL_PREFIX@/@LIBDIR_REL@"

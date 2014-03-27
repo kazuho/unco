@@ -1,9 +1,9 @@
 PROGS=unco.dylib unco
-DYLIB_OBJS=logger.o preload.o
-CMD_OBJS=cmd.o
+DYLIB_OBJS=log.o preload.o misc.o
+CMD_OBJS=log.o cmd.o misc.o
 
 .c.o:
-	$(CC) -Wall -c $<
+	$(CC) -g -Wall -c $<
 
 all: $(PROGS)
 

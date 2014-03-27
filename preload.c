@@ -6,11 +6,15 @@
 #include <stdlib.h>
 #include <string.h>
 #include <sys/param.h>
+#include <sys/stat.h>
+#include <sys/time.h>
 #include <unistd.h>
 #include "unco.h"
 
 static int (*default_open)(const char *path, int oflag, ...);
 static int (*default_mkdir)(const char *path, mode_t mode);
+static int (*default_futimes)(int fildes, const struct timeval times[2]);
+
 static int _log_is_open = 0;
 static struct uncolog_fp _log_fp;
 
@@ -21,6 +25,7 @@ static void init_defaults()
 
 	default_open = (int (*)(const char*, int, ...))dlsym(RTLD_NEXT, "open");
 	default_mkdir = (int (*)(const char *, mode_t))dlsym(RTLD_NEXT, "mkdir");
+	default_futimes = (int (*)(int, const struct timeval[2]))dlsym(RTLD_NEXT, "futimes");
 }
 
 static struct uncolog_fp *log_fp()
@@ -39,9 +44,49 @@ static struct uncolog_fp *log_fp()
 		return &_log_fp;
 	}
 	snprintf(logfn, sizeof(logfn), "%s/.unco-log", home);
-	uncolog_open(&_log_fp, logfn, default_open, default_mkdir);
+	uncolog_open(&_log_fp, logfn, 'a', default_open, default_mkdir);
 
 	return &_log_fp;
+}
+
+static int backup_file(struct uncolog_fp* ufp, int srcfd, const char *srcpath)
+{
+	struct stat st;
+	char linkfn[PATH_MAX];
+	int linkfd = -1;
+
+	fstat(srcfd, &st); // TODO need to check error?
+
+	// create backup file
+	if (uncolog_get_linkname(ufp, linkfn) != 0)
+		goto Error;
+	if ((linkfd = default_open(linkfn, O_WRONLY | O_CREAT | O_TRUNC, 0600)) == -1) {
+		fprintf(stderr, "failed to create backup file:%s:%d\n", linkfn, errno);
+		goto Error;
+	}
+	// copy contents
+	if (unco_copyfd(srcfd, linkfd) != 0) {
+		fprintf(stderr, "failed to backup file:%s:%d\n", srcpath, errno);
+		goto Error;
+	}
+
+	// copy file attributes that need to be restored on undo: times
+	if (unco_utimes(linkfd, &st, default_futimes) != 0) {
+		fprintf(stderr, "failed to update times of backup file:%s:%d\n", linkfn, errno);
+		goto Error;
+	}
+	// close linkfd
+	close(linkfd);
+	linkfd = -1;
+	// write log
+	if (uncolog_write_argfn(ufp, linkfn) != 0)
+		goto Error;
+
+	return 0;
+Error:
+	if (linkfd != -1)
+		close(linkfd);
+	return -1;
 }
 
 static void before_writeopen(const char* path, int oflag)
@@ -50,20 +95,23 @@ static void before_writeopen(const char* path, int oflag)
 
 	if (strncmp(path, "/dev/", 5) == 0)
 		return;
+	if ((oflag & O_SYMLINK) != 0) {
+		uncolog_set_error(log_fp(), "do not know how to handle open(O_SYMLINK) against file:%s\n", path);
+		return;
+	}
 
 	// open the existing file
 	if ((cur_fd = default_open(path, oflag & (O_SYMLINK | O_NOFOLLOW))) == -1) {
 		// file does not exist
-		uncolog_write_action(log_fp(), "create", 2);
+		uncolog_write_action(log_fp(), "create", 1);
 		uncolog_write_argfn(log_fp(), path);
 		return;
 	}
 
 	// file exists, back it up
-	uncolog_write_action(log_fp(), "overwrite", 3);
+	uncolog_write_action(log_fp(), "overwrite", 2);
 	uncolog_write_argfn(log_fp(), path);
-	uncolog_write_argn(log_fp(), (oflag & O_NOFOLLOW) == 0);
-	uncolog_write_argfd(log_fp(), cur_fd);
+	backup_file(log_fp(), cur_fd, path);
 
 	close(cur_fd);
 }
@@ -102,11 +150,31 @@ WRAP(fopen, FILE*, (const char* path, const char* mode), {
 })
 
 WRAP(rename, int, (const char *old, const char *new), {
+	char backup[PATH_MAX];
+
+	// create backup link
+	if (uncolog_get_linkname(log_fp(), backup) == 0) {
+		if (link(new, backup) != 0) {
+			if (errno == 0 || errno == EEXIST) {
+				// ok
+			} else {
+				uncolog_set_error(log_fp(), "failed to create backup link for file:%s:%d\n", new, errno);
+			}
+			backup[0] = '\0';
+		}
+	} else {
+		backup[0] = '\0';
+	}
+
+	// take the action
 	int ret = orig(old, new);
+
 	if (ret == 0) {
-		uncolog_write_action(log_fp(), "rename", 2);
+		uncolog_write_action(log_fp(), "rename", backup[0] != '\0' ? 3 : 2);
 		uncolog_write_argfn(log_fp(), old);
 		uncolog_write_argfn(log_fp(), new);
+		if (backup[0] != '\0')
+			uncolog_write_argfn(log_fp(), backup);
 	}
 	return ret;
 })
@@ -117,9 +185,10 @@ WRAP(unlink, int, (const char *path), {
 
 	// create backup link
 	if (uncolog_get_linkname(log_fp(), backup) == 0) {
-		if (link(path, backup) != 0)
+		if (link(path, backup) != 0) {
 			backup[0] = '\0';
 			linkerrno = errno;
+		}
 	} else {
 		backup[0] = '\0';
 	}

@@ -1,5 +1,9 @@
+CMakeCache.txt
+CMakeFiles/
+Makefile
+cmake_install.cmake
 *~
 tmp/
 *.o
-unco.dylib
+libunco-preload.dylib
 unco

@@ -174,6 +174,12 @@ int uncolog_close(struct uncolog_fp *ufp)
 	return 0;
 }
 
+// returns -1 if is already closed by error
+int uncolog_get_fd(struct uncolog_fp *ufp)
+{
+	return ufp->_fd;
+}
+
 int uncolog_write_action(struct uncolog_fp *ufp, const char *action, int argc)
 {
 	char buf[32];

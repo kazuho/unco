@@ -42,6 +42,7 @@ void uncolog_set_error(struct uncolog_fp *ufp, const char *fmt, ...);
 
 int uncolog_open(struct uncolog_fp *ufp, const char *path, int mode, int (*default_open)(const char *, int, ...), int (*default_mkdir)(const char *, mode_t));
 int uncolog_close(struct uncolog_fp *ufp);
+int uncolog_get_fd(struct uncolog_fp *ufp);
 
 int uncolog_write_action(struct uncolog_fp *ufp, const char *action, int argc);
 int uncolog_write_argn(struct uncolog_fp *ufp, off_t n);

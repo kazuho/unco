@@ -32,6 +32,7 @@
 #include <sys/stat.h>
 #include <sys/time.h>
 #include <unistd.h>
+#include <crt_externs.h>
 #include "unco.h"
 
 static int (*default_open)(const char *path, int oflag, ...);
@@ -49,6 +50,34 @@ static void init_defaults()
 	default_open = (int (*)(const char*, int, ...))dlsym(RTLD_NEXT, "open");
 	default_mkdir = (int (*)(const char *, mode_t))dlsym(RTLD_NEXT, "mkdir");
 	default_futimes = (int (*)(int, const struct timeval[2]))dlsym(RTLD_NEXT, "futimes");
+}
+
+static void log_meta(struct uncolog_fp *ufp)
+{
+	char cmdbuf[4096], **argv, cwd[PATH_MAX];
+	int i, argc;
+
+	uncolog_write_action(ufp, "meta", 4);
+
+	// log argv
+	argc = *_NSGetArgc();
+	argv = *_NSGetArgv();
+	cmdbuf[0] = '\0';
+	for (i = 0; i != argc; ++i)
+		snprintf(cmdbuf + strlen(cmdbuf), sizeof(cmdbuf) - strlen(cmdbuf),
+		i == 0 ? "%s" : " %s",
+		argv[i]);
+	uncolog_write_argbuf(ufp, cmdbuf, strlen(cmdbuf));
+
+	// log cwd
+	getcwd(cwd, sizeof(cwd));
+	uncolog_write_argbuf(ufp, cwd, sizeof(cwd));
+
+	// log pid
+	uncolog_write_argn(ufp, getpid());
+
+	// log ppid
+	uncolog_write_argn(ufp, getppid());
 }
 
 static struct uncolog_fp *log_fp()
@@ -84,8 +113,14 @@ static struct uncolog_fp *log_fp()
 		setenv("UNCO_LOG", logfn, 1);
 	}
 
-	// open and return
+	// open
 	uncolog_open(&_log_fp, logfn, 'a', default_open, default_mkdir);
+
+	// if it is a new file, set meta (FIXME should do this at __attribute__((constructor)))
+	if (uncolog_get_fd(&_log_fp) != -1) {
+		if (lseek(uncolog_get_fd(&_log_fp), 0, SEEK_CUR) == 0)
+			log_meta(&_log_fp);
+	}
 	return &_log_fp;
 Error:
 	uncolog_init_fp(&_log_fp);

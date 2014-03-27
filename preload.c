@@ -155,11 +155,8 @@ WRAP(rename, int, (const char *old, const char *new), {
 	// create backup link
 	if (uncolog_get_linkname(log_fp(), backup) == 0) {
 		if (link(new, backup) != 0) {
-			if (errno == 0 || errno == EEXIST) {
-				// ok
-			} else {
+			if (errno != ENOENT)
 				uncolog_set_error(log_fp(), "failed to create backup link for file:%s:%d\n", new, errno);
-			}
 			backup[0] = '\0';
 		}
 	} else {

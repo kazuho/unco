@@ -129,10 +129,10 @@ int uncolog_open(struct uncolog_fp *ufp, const char *path, int mode, int (*defau
 		break;
 */
 	case 'a':
-		oflag = O_CREAT | O_WRONLY | O_APPEND;
+		oflag = O_CREAT | O_WRONLY | O_APPEND | O_CLOEXEC;
 		break;
 	case 'r':
-		oflag = O_RDONLY;
+		oflag = O_RDONLY | O_CLOEXEC;
 		break;
 	default:
 		assert(!"unknown mode");

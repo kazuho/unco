@@ -60,6 +60,9 @@ int unco_full_write(int fd, const void *data, size_t len);
 int unco_copyfd(int srcfd, int dstfd);
 int unco_utimes(int fd, const struct stat *st, int (*futimes)(int, const struct timeval times[2]));
 
+int unco_get_default_dir(char *dir);
+long long unco_get_next_logindex(const char *dir);
+
 #ifdef __cplusplus
 }
 #endif

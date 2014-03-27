@@ -262,21 +262,18 @@ static int do_record(int argc, char **argv)
 	int opt_ch, append = 0;
 
 	// fetch opts
-	while ((opt_ch = getopt_long(argc + 1, argv - 1, "l:", longopts, NULL)) != -1) {
+	while ((opt_ch = getopt_long(argc + 1, argv - 1, "l:a", longopts, NULL)) != -1) {
 		switch (opt_ch) {
 		case 'l':
 			log_file = optarg;
 			break;
 		case 'a':
 			append = 1;
+			break;
 		default:
 			fprintf(stderr, "unknown option: %c\n", opt_ch);
 			return EX_USAGE;
 		}
-	}
-	if (log_file == NULL) {
-		fprintf(stderr, "missing mandatory option: --log\n");
-		return EX_USAGE;
 	}
 	argc -= optind - 1;
 	argv += optind - 1;
@@ -285,14 +282,21 @@ static int do_record(int argc, char **argv)
 		return EX_USAGE;
 	}
 
-	if (! append)
-		if (uncolog_delete(log_file, 1) != 0)
+	if (append) {
+		if (log_file == NULL) {
+			fprintf(stderr, "cannot use --apend without --log\n");
+			return EX_USAGE;
+		}
+	} else {
+		if (log_file != NULL && uncolog_delete(log_file, 1) != 0)
 			return EX_OSERR;
+	}
 
 	// set environment variables and exec
 	setenv("DYLD_INSERT_LIBRARIES", WITH_LIBDIR "/libunco-preload.dylib", 1);
 	setenv("DYLD_FORCE_FLAT_NAMESPACE", "YES", 1);
-	setenv("UNCO_LOG", log_file, 1);
+	if (log_file != NULL)
+		setenv("UNCO_LOG", log_file, 1);
 	execvp(argv[0], argv);
 	fprintf(stderr, "failed to exec:%s:%d\n", argv[0], errno);
 	return 127; // FIXME what is the right code?

@@ -22,6 +22,8 @@
  * THE SOFTWARE.
  */
 #include <errno.h>
+#include <stdio.h>
+#include <stdlib.h>
 #include <unistd.h>
 #include "unco.h"
 
@@ -78,4 +80,73 @@ int unco_utimes(int fd, const struct stat *st, int (*futimes)(int, const struct 
 	times[1].tv_sec = st->st_mtime;
 	times[1].tv_usec = 0;
 	return futimes(fd, times);
+}
+
+int unco_get_default_dir(char *dir)
+{
+	char *env;
+
+	// $HOME/.unco
+	if ((env = getenv("HOME")) == NULL) {
+		fprintf(stderr, "unco:$HOME is not set\n");
+		return -1;
+	}
+	snprintf(dir, PATH_MAX, "%s/.unco", env);
+
+	// mkdir
+	if (mkdir(dir, 0700) == 0 || errno == EEXIST) {
+		// ok
+	} else {
+		fprintf(stderr, "failed to create dir:%s:%d\n", dir, errno);
+		return -1;
+	}
+	return 0;
+}
+
+static int _log_exists(const char *dir, long long log_index, int *exists)
+{
+	struct stat st;
+	char path[PATH_MAX];
+
+	snprintf(path, sizeof(path), "%s/%lld", dir, log_index);
+
+	if (lstat(path, &st) == 0) {
+		*exists = 1;
+	} else if (errno == ENOENT) {
+		*exists = 0;
+	} else {
+		fprintf(stderr, "failed to stat file:%s:%d\n", path, errno);
+		return -1;
+	}
+
+	return 0;
+}
+
+long long unco_get_next_logindex(const char *dir)
+{
+	long long min, max, mid;
+	int exists;
+
+	// index starts from 1; search using Elias encoding (i.e. search at 1,2,4,8,16,... and then perform binary search)
+	for (max = 1; ; max *= 2) {
+		if (_log_exists(dir, max, &exists) != 0)
+			goto Error;
+		if (! exists)
+			break;
+	}
+	// binary search within [min, max)
+	min = max / 2 + 1;
+	while (min != max) {
+		mid = (min + max) / 2;
+		if (_log_exists(dir, mid, &exists) != 0)
+			goto Error;
+		if (exists)
+			min = mid + 1;
+		else
+			max = mid;
+	}
+	return min;
+
+Error:
+	return -1;
 }

@@ -53,7 +53,8 @@ static void init_defaults()
 
 static struct uncolog_fp *log_fp()
 {
-	char *logfn, *env, cwd[PATH_MAX], fnbuf[PATH_MAX];
+	char *logfn, *env, dir[PATH_MAX], fnbuf[PATH_MAX];
+	long long log_index;
 
 	if (_log_is_open)
 		return &_log_fp;
@@ -64,20 +65,23 @@ static struct uncolog_fp *log_fp()
 		if (env[0] == '/') {
 			logfn = env;
 		} else {
-			if (getcwd(cwd, sizeof(cwd)) == NULL) {
+			if (getcwd(dir, sizeof(dir)) == NULL) {
 				perror("unco:could not obtain cwd");
 				goto Error;
 			}
-			snprintf(fnbuf, sizeof(fnbuf), "%s/%s", cwd, env);
+			snprintf(fnbuf, sizeof(fnbuf), "%s/%s", dir, env);
 			logfn = fnbuf;
 		}
 	} else {
-		if ((env = getenv("HOME")) == NULL) {
-			fprintf(stderr, "unco:$HOME is not set\n");
+		// default
+		if (unco_get_default_dir(dir) != 0)
 			goto Error;
-		}
-		snprintf(fnbuf, sizeof(fnbuf), "%s/.unco-log", env);
+		if ((log_index = unco_get_next_logindex(dir)) == -1)
+			goto Error;
+		snprintf(fnbuf, sizeof(fnbuf), "%s/%lld", dir, log_index);
 		logfn = fnbuf;
+		// set UNCO_LOG, so that child processes would write to the same file
+		setenv("UNCO_LOG", logfn, 1);
 	}
 
 	// open and return

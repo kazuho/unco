@@ -91,12 +91,14 @@ static char *read_argfn_quoted(struct uncolog_fp *ufp)
 		return NULL;
 
 	// empty string => ''
-	if (raw[0] == '\0')
-		return strdup("''");
+	if (raw[0] == '\0') {
+		quoted = strdup("''");
+		goto Exit;
+	}
 
 	if ((quoted = (char *)malloc(strlen(raw) * 2 + 1)) == NULL) {
 		perror("");
-		return NULL;
+		goto Exit;
 	}
 	quoted_idx = 0;
 	for (raw_idx = 0; raw[raw_idx] != '\0'; ++raw_idx) {
@@ -112,6 +114,8 @@ static char *read_argfn_quoted(struct uncolog_fp *ufp)
 	}
 	quoted[quoted_idx++] = '\0';
 
+Exit:
+	free(raw);
 	return quoted;
 }
 

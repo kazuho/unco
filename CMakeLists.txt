@@ -7,10 +7,10 @@ SET(soserial "1")
 SET(CMAKE_C_FLAGS "${CMAKE_C_FLAGS} -Wall -g")
 SET(LIBDIR_REL "lib")
 
-ADD_LIBRARY(unco-preload SHARED preload.c log.c misc.c)
-ADD_EXECUTABLE(unco cmd.c log.c misc.c)
+ADD_LIBRARY(unco-preload SHARED src/preload.c src/log.c src/misc.c)
+ADD_EXECUTABLE(unco src/cmd.c src/log.c src/misc.c)
 
-CONFIGURE_FILE(config.h.cmake ${CMAKE_SOURCE_DIR}/config.h)
+CONFIGURE_FILE(src/config.h.cmake src/config.h)
 
 INSTALL(TARGETS unco unco-preload
 	RUNTIME DESTINATION bin

@@ -90,11 +90,6 @@ struct action {
 	};
 };
 
-struct script {
-	struct script *next;
-	char block[PATH_MAX * 10];
-};
-
 static char *shellquote(const char *raw)
 {
 	char *quoted;
@@ -125,35 +120,16 @@ static char *shellquote(const char *raw)
 	return quoted;
 }
 
-static int prepend_script(struct script **script, const char *fmt, ...)
+static char *prepend_printf(struct unco_list *l, const char *fmt, ...)
 {
-	struct script *head;
 	va_list arg;
-
-	if ((head = (struct script *)malloc(sizeof(struct script))) == NULL) {
-		perror("");
-		return -1;
-	}
-	head->next = *script;
+	char buf[16384];
 
 	va_start(arg, fmt);
-	vsnprintf(head->block, sizeof(head->block), fmt, arg);
+	snprintf(buf, sizeof(buf), fmt, arg);
 	va_end(arg);
 
-	*script = head;
-
-	return 0;
-}
-
-static void free_script(struct script *script)
-{
-	struct script *t;
-
-	while (script != NULL) {
-		t = script->next;
-		free(script);
-		script = t;
-	}
+	return unco_list_insert(l, unco_list_next(l, NULL), buf, strlen(buf) + 1);
 }
 
 static int consume_log(const char *logpath, int (*cb)(struct action *action, void *cb_arg), void *cb_arg)
@@ -291,7 +267,7 @@ static int do_record(int argc, char **argv)
 #pragma mark revert
 
 struct revert_info {
-	struct script *script;
+	struct unco_list lines;
 	int is_finalized;
 	char header[8192];
 };
@@ -322,10 +298,10 @@ static int revert_action_handler(struct action *action, void *cb_arg)
 
 		if (FREE_PTRS_PUSH((path_quoted = shellquote(action->create.path))) == NULL)
 			goto Exit;
-		if (prepend_script(&info->script,
+		if (prepend_printf(&info->lines,
 				"# revert create\n"
 				"rm %s || exit 1\n",
-				path_quoted) != 0)
+				path_quoted) == NULL)
 			goto Exit;
 
 	} else if (strcmp(action->name, "overwrite") == 0) {
@@ -335,11 +311,11 @@ static int revert_action_handler(struct action *action, void *cb_arg)
 		if (FREE_PTRS_PUSH(path_quoted = shellquote(action->overwrite.path)) == NULL
 			|| FREE_PTRS_PUSH(backup_quoted = shellquote(action->overwrite.backup)) == NULL)
 			goto Exit;
-		if (prepend_script(&info->script,
+		if (prepend_printf(&info->lines,
 				"# revert overwrite\n"
 				"ls %s > /dev/null || exit 1\n" // target should exist
 				"cat %s > %s || exit 1\n",
-				path_quoted, backup_quoted, path_quoted) != 0)
+				path_quoted, backup_quoted, path_quoted) == NULL)
 			goto Exit;
 		// TODO: adjust mtime
 
@@ -351,19 +327,19 @@ static int revert_action_handler(struct action *action, void *cb_arg)
 			|| FREE_PTRS_PUSH(new_quoted = shellquote(action->rename.new)) == NULL)
 			goto Exit;
 		if (action->rename.backup == NULL) {
-			if (prepend_script(&info->script,
+			if (prepend_printf(&info->lines,
 					"# revert rename\n"
 					"mv -n %s %s || exit 1\n",
-					new_quoted, old_quoted) != 0)
+					new_quoted, old_quoted) == NULL)
 				goto Exit;
 		} else {
 			if (FREE_PTRS_PUSH(backup_quoted = shellquote(action->rename.backup)) == NULL)
 				goto Exit;
-			if (prepend_script(&info->script,
+			if (prepend_printf(&info->lines,
 					"# revert rename (replacing)\n"
 					"mv -n %s %s || exit 1\n"
 					"cat %s > %s || exit 1\n",
-					new_quoted, old_quoted, backup_quoted, new_quoted) != 0)
+					new_quoted, old_quoted, backup_quoted, new_quoted) == NULL)
 				goto Exit;
 		}
 
@@ -374,10 +350,10 @@ static int revert_action_handler(struct action *action, void *cb_arg)
 		if (FREE_PTRS_PUSH(path_quoted = shellquote(action->overwrite.path)) == NULL
 			|| FREE_PTRS_PUSH(backup_quoted = shellquote(action->overwrite.backup)) == NULL)
 			goto Exit;
-		if (prepend_script(&info->script,
+		if (prepend_printf(&info->lines,
 				"# revert unlink\n"
 				"ln %s %s || exit 1\n",
-				backup_quoted, path_quoted) != 0)
+				backup_quoted, path_quoted) == NULL)
 			goto Exit;
 
 	} else if (strcmp(action->name, "finalize") == 0) {
@@ -405,11 +381,12 @@ static int do_revert(int argc, char **argv)
 		{ "run", no_argument, NULL, 'r' },
 		{ NULL }
 	};
-	const char *log_file;
+	const char *log_file, *lines;
 	int opt_ch, run = 0, exit = EX_SOFTWARE;
-	struct revert_info info = { NULL, 0 };
+	struct revert_info info;
 	FILE *outfp;
-	struct script *script_block;
+
+	memset(&info, 0, sizeof(info));
 
 	// fetch opts
 	while ((opt_ch = getopt_long(argc + 1, argv - 1, "l:r", longopts, NULL)) != -1) {
@@ -455,8 +432,8 @@ static int do_revert(int argc, char **argv)
 	}
 	// dump the commands
 	fputs(info.header, outfp);
-	for (script_block = info.script; script_block != NULL; script_block = script_block->next) {
-		fputs(script_block->block, outfp);
+	for (lines = NULL; (lines = unco_list_next(&info.lines, lines)) != NULL; ) {
+		fputs(lines, outfp);
 	}
 	// close the pipe
 	if (run) {
@@ -467,7 +444,7 @@ static int do_revert(int argc, char **argv)
 	// success
 	exit = 0;
 Exit:
-	free_script(info.script);
+	unco_list_clear(&info.lines);
 	return exit;
 }
 

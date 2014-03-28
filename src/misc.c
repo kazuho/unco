@@ -21,9 +21,11 @@
  * OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN
  * THE SOFTWARE.
  */
+#include <assert.h>
 #include <errno.h>
 #include <stdio.h>
 #include <stdlib.h>
+#include <string.h>
 #include <unistd.h>
 #include "unco.h"
 
@@ -149,4 +151,85 @@ long long unco_get_next_logindex(const char *dir)
 
 Error:
 	return -1;
+}
+
+void unco_list_clear(struct unco_list *l)
+{
+	struct _unco_list_item *item, *tmp;
+
+	if ((item = l->_head) != NULL) {
+		do {
+			tmp = item->next == l->_head ? NULL : item->next;
+			free(item);
+		} while ((item = tmp) != NULL);
+	}
+}
+
+#define _ITEM_HEADER_SIZE (((struct _unco_list_item *)NULL)->bytes - (const char*)NULL)
+#define _BODY_TO_ITEM(p) ((struct _unco_list_item *)((const char *)(p) - _ITEM_HEADER_SIZE))
+
+void *unco_list_next(struct unco_list *l, const void *cur)
+{
+	if (l->_head == NULL) {
+		return NULL;
+	} else if (cur == NULL) {
+		return l->_head->bytes;
+	} else {
+		struct _unco_list_item *item = _BODY_TO_ITEM(cur);
+		return item->next == l->_head ? NULL : item->next->bytes;
+	}
+}
+
+void *unco_list_prev(struct unco_list *l, const void *cur)
+{
+	if (l->_head == NULL) {
+		return NULL;
+	} else if (cur == NULL) {
+		return l->_head->prev->bytes;
+	} else {
+		struct _unco_list_item *item = _BODY_TO_ITEM(cur);
+		return item == l->_head ? NULL : item->prev->bytes;
+	}
+}
+
+void *unco_list_insert(struct unco_list *l, const void *before_bytes, const void *data, size_t sz)
+{
+	struct _unco_list_item *item, *before;
+
+	if ((item = malloc(_ITEM_HEADER_SIZE + sz)) == NULL)
+		return NULL;
+	memcpy(item->bytes, data, sz);
+	++l->count;
+
+	if (l->_head != NULL) {
+		before = before_bytes != NULL ? _BODY_TO_ITEM(before_bytes) : l->_head;
+		if (l->_head == before)
+			l->_head = item;
+		item->next = before;
+		item->prev = before->prev;
+		item->next->prev = item;
+		item->prev->next = item;
+	} else {
+		assert(before_bytes == NULL);
+		item->next = item->prev = item;
+		l->_head = item;
+	}
+	return item->bytes;
+}
+
+void unco_list_erase(struct unco_list *l, const void *cur)
+{
+	struct _unco_list_item *item = _BODY_TO_ITEM(cur);
+
+	--l->count;
+	if (item->next == item) {
+		assert(l->count == 0);
+		assert(l->_head == item);
+		l->_head = NULL;
+	} else {
+		item->prev->next = item->next;
+		item->next->prev = item->prev;
+		if (l->_head == item)
+			l->_head = item->next;
+	}
 }

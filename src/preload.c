@@ -34,12 +34,51 @@
 #include <unistd.h>
 #include <crt_externs.h>
 #include "unco.h"
+#include "config.h"
 
 static int (*default_open)(const char *path, int oflag, ...);
 static int (*default_mkdir)(const char *path, mode_t mode);
 static int (*default_futimes)(int fildes, const struct timeval times[2]);
 
 static struct uncolog_fp ufp;
+
+static void spawn_finalizer()
+{
+	int pipe_fds[2];
+
+	if (pipe(pipe_fds) != 0) {
+		uncolog_set_error(&ufp, "pipe failed:%d\n", errno);
+		return;
+	}
+	switch (fork()) {
+	case 0: // child proc
+		break;
+	case -1: // fork failed
+		uncolog_set_error(&ufp,"fork failed:%d\n", errno);
+		close(pipe_fds[0]);
+		close(pipe_fds[1]);
+		return;
+	default: // fork succeeded (and I am the parent)
+		close(pipe_fds[0]);
+		return;
+	}
+	// only child proc enters here
+
+	// close files, and change pipe reader to stdin
+	dup2(pipe_fds[0], 0);
+	close(pipe_fds[0]);
+	close(pipe_fds[1]);
+	uncolog_close(&ufp);
+
+	// unset the preload
+	unsetenv("DYLD_INSERT_LIBRARIES");
+	unsetenv("DYLD_FORCE_FLAT_NAMESPACE");
+
+	// exec uncolog _finalize
+	execl(WITH_BINDIR "/unco", "unco", "_finalize", NULL);
+	perror("failed to exec:" WITH_BINDIR "/unco");
+	exit(1);
+}
 
 static void log_meta(void)
 {
@@ -74,6 +113,7 @@ extern void _setup_unco_preload()
 {
 	char *logfn, *env, dir[PATH_MAX], fnbuf[PATH_MAX];
 	long long log_index;
+	int open_mode;
 
 	// load default handlers
 	default_open = (int (*)(const char*, int, ...))dlsym(RTLD_NEXT, "open");
@@ -92,6 +132,7 @@ extern void _setup_unco_preload()
 			snprintf(fnbuf, sizeof(fnbuf), "%s/%s", dir, env);
 			logfn = fnbuf;
 		}
+		open_mode = 'a';
 	} else {
 		// default
 		if (unco_get_default_dir(dir) != 0)
@@ -102,15 +143,16 @@ extern void _setup_unco_preload()
 		logfn = fnbuf;
 		// set UNCO_LOG, so that child processes would write to the same file
 		setenv("UNCO_LOG", logfn, 1);
+		open_mode = 'w';
 	}
 
 	// open the log
-	uncolog_open(&ufp, logfn, 'a', default_open, default_mkdir);
+	uncolog_open(&ufp, logfn, open_mode, default_open, default_mkdir);
 
-	// if it is a new file, set meta (FIXME should do this at __attribute__((constructor)))
-	if (uncolog_get_fd(&ufp) != -1) {
-		if (lseek(uncolog_get_fd(&ufp), 0, SEEK_CUR) == 0)
-			log_meta();
+	// setup procedures for a new log
+	if (open_mode == 'w' && uncolog_get_fd(&ufp) != -1) {
+		log_meta();
+		spawn_finalizer();
 	}
 
 	return;

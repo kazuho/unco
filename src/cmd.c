@@ -209,6 +209,8 @@ static int consume_log(const char *logpath, int (*cb)(struct action *action, voi
 			assert(action.argc == 2);
 			READ_ARGSTR(unlink.path);
 			READ_ARGSTR(unlink.backup);
+		} else if (strcmp(action.name, "finalize") == 0) {
+			assert(action.argc == 0);
 		} else {
 			fprintf(stderr, "unknown action:%s\n", action.name);
 			goto Exit;
@@ -240,10 +242,8 @@ static int do_record(int argc, char **argv)
 		{ "append", no_argument, NULL, 'a' },
 		{ NULL }
 	};
-	const char *log_file;
+	const char *log_file = NULL;
 	int opt_ch, append = 0;
-	char uncodir[PATH_MAX], fnbuf[PATH_MAX];
-	long long logindex;
 
 	// fetch opts
 	while ((opt_ch = getopt_long(argc + 1, argv - 1, "l:a", longopts, NULL)) != -1) {
@@ -275,12 +275,6 @@ static int do_record(int argc, char **argv)
 		if (log_file != NULL) {
 			if (uncolog_delete(log_file, 1) != 0)
 				return EX_OSERR;
-		} else {
-			if (unco_get_default_dir(uncodir) != 0
-				|| (logindex = unco_get_next_logindex(uncodir)) == -1)
-				return EX_DATAERR;
-			snprintf(fnbuf, sizeof(fnbuf), "%s/%lld", uncodir, logindex);
-			log_file = fnbuf;
 		}
 	}
 
@@ -298,6 +292,7 @@ static int do_record(int argc, char **argv)
 
 struct revert_info {
 	struct script *script;
+	int is_finalized;
 	char header[8192];
 };
 
@@ -385,6 +380,10 @@ static int revert_action_handler(struct action *action, void *cb_arg)
 				backup_quoted, path_quoted) != 0)
 			goto Exit;
 
+	} else if (strcmp(action->name, "finalize") == 0) {
+
+		info->is_finalized = 1;
+
 	} else {
 
 		fprintf(stderr, "unknown action:%s\n", action->name);
@@ -408,7 +407,7 @@ static int do_revert(int argc, char **argv)
 	};
 	const char *log_file;
 	int opt_ch, run = 0, exit = EX_SOFTWARE;
-	struct revert_info info = { NULL };
+	struct revert_info info = { NULL, 0 };
 	FILE *outfp;
 	struct script *script_block;
 
@@ -441,6 +440,9 @@ static int do_revert(int argc, char **argv)
 		goto Exit;
 	}
 
+	if (! info.is_finalized)
+		fprintf(stderr, "\n    !!! WARNING !!! the command is still running\n\n");
+
 	// setup output
 	if (run) {
 		if ((outfp = popen("sh", "w")) == NULL) {
@@ -467,6 +469,41 @@ static int do_revert(int argc, char **argv)
 Exit:
 	free_script(info.script);
 	return exit;
+}
+
+static int do_finalize()
+{
+	const char *logfn;
+	char rdbuf;
+	int rdret;
+	struct uncolog_fp ufp;
+
+	// obtain log filename
+	if ((logfn = getenv("UNCO_LOG")) == NULL) {
+		fprintf(stderr, "$UNCO_LOG not set\n");
+		return EX_USAGE;
+	}
+
+	// wait for stdin to get closed
+	while ((rdret = read(0, &rdbuf, 1)) != 0) {
+		if (rdret == -1 && ! (errno == EAGAIN || errno == EWOULDBLOCK)) {
+			perror("I/O error while waiting for stdin to get closed");
+			return EX_OSERR;
+		}
+	}
+
+	// open log and append the marker
+	if (uncolog_open(&ufp, logfn, 'a', open, mkdir) != 0)
+		return EX_SOFTWARE;
+	if (uncolog_write_action(&ufp, "finalize", 0) != 0) {
+		uncolog_close(&ufp);
+		return EX_OSERR;
+	}
+	uncolog_close(&ufp);
+
+	// TODO write sha1 of files that would get reverted by unco revert
+
+	return 0;
 }
 
 static int help(int retval)
@@ -503,6 +540,8 @@ int main(int argc, char **argv)
 		return do_record(argc, argv);
 	else if (strcmp(cmd, "revert") == 0)
 		return do_revert(argc, argv);
+	else if (strcmp(cmd, "_finalize") == 0)
+		return do_finalize();
 	else if (strcmp(cmd, "help") == 0)
 		return help(0);
 	else

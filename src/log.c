@@ -123,11 +123,9 @@ int uncolog_open(struct uncolog_fp *ufp, const char *path, int mode, int (*defau
 
 	// setup oflag
 	switch (mode) {
-/* "w" is intentionally disabled, since more than one process (i.e. forked processes) might write to the same log
 	case 'w':
-		oflag = O_CREAT | O_WRONLY;
+		oflag = O_CREAT | O_WRONLY | O_APPEND | O_CLOEXEC | O_EXCL;
 		break;
-*/
 	case 'a':
 		oflag = O_CREAT | O_WRONLY | O_APPEND | O_CLOEXEC;
 		break;

@@ -64,15 +64,10 @@ int unco_utimes(int fd, const struct stat *st, int (*futimes)(int, const struct 
 int unco_get_default_dir(char *dir);
 long long unco_get_next_logindex(const char *dir);
 
-struct _uncolist_item {
-	struct _uncolist_item *prev;
-	struct _uncolist_item *next;
-	char bytes[1];
-};
-
 struct uncolist {
 	struct _uncolist_item *_head;
 	size_t count;
+	void (*destroy_item)(void *item);
 };
 
 void uncolist_clear(struct uncolist *l);

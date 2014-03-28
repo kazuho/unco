@@ -153,6 +153,15 @@ Error:
 	return -1;
 }
 
+struct _uncolist_item {
+	struct _uncolist_item *prev;
+	struct _uncolist_item *next;
+	char bytes[1];
+};
+
+#define _ITEM_HEADER_SIZE (((struct _uncolist_item *)NULL)->bytes - (const char*)NULL)
+#define _BODY_TO_ITEM(p) ((struct _uncolist_item *)((const char *)(p) - _ITEM_HEADER_SIZE))
+
 void uncolist_clear(struct uncolist *l)
 {
 	struct _uncolist_item *item, *tmp;
@@ -160,13 +169,12 @@ void uncolist_clear(struct uncolist *l)
 	if ((item = l->_head) != NULL) {
 		do {
 			tmp = item->next == l->_head ? NULL : item->next;
+			if (l->destroy_item != NULL)
+				l->destroy_item(item->bytes);
 			free(item);
 		} while ((item = tmp) != NULL);
 	}
 }
-
-#define _ITEM_HEADER_SIZE (((struct _uncolist_item *)NULL)->bytes - (const char*)NULL)
-#define _BODY_TO_ITEM(p) ((struct _uncolist_item *)((const char *)(p) - _ITEM_HEADER_SIZE))
 
 void *uncolist_next(struct uncolist *l, const void *cur)
 {
@@ -220,6 +228,9 @@ void *uncolist_insert(struct uncolist *l, const void *before_bytes, const void *
 void uncolist_erase(struct uncolist *l, const void *cur)
 {
 	struct _uncolist_item *item = _BODY_TO_ITEM(cur);
+
+	if (l->destroy_item != NULL)
+		l->destroy_item(item->bytes);
 
 	--l->count;
 	if (item->next == item) {

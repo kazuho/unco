@@ -432,7 +432,7 @@ static int do_revert(int argc, char **argv)
 	return 0;
 }
 
-int help(int retval)
+static int help(int retval)
 {
 	printf(
 	    "unco version " UNCO_VERSION "\n"

@@ -42,21 +42,88 @@
 #ifndef EX_DATAERR
 # define EX_DATAERR 65
 #endif
+#ifndef EX_SOFTWARE
+# define EX_SOFTWARE 70
+#endif
 #ifndef EX_OSERR
 # define EX_OSERR 71
 #endif
 
-struct metainfo {
-	char cmd[4096];
-	char cwd[PATH_MAX];
-	pid_t pid;
-	pid_t ppid;
+#define FREE_PTRS_INIT(n) \
+	void *free_ptrs[n]; \
+	int free_ptr_index = 0
+#define FREE_PTRS() \
+	do { \
+		if (free_ptr_index != 0) \
+			do \
+				free(free_ptrs[--free_ptr_index]); \
+			while (free_ptr_index != 0); \
+	} while (0)
+#define FREE_PTRS_PUSH(p) (free_ptrs[free_ptr_index++] = (p))
+
+struct action {
+	char name[256];
+	int argc;
+	union {
+		struct {
+			char *cmd;
+			char *cwd;
+			pid_t pid;
+			pid_t ppid;
+		} meta;
+		struct {
+			char *path;
+		} create;
+		struct {
+			char *path;
+			char *backup;
+		} overwrite;
+		struct {
+			char *old;
+			char *new;
+			char *backup;
+		} rename;
+		struct {
+			char *path;
+			char *backup;
+		} unlink;
+	};
 };
 
 struct script {
 	struct script *next;
 	char block[PATH_MAX * 10];
 };
+
+static char *shellquote(const char *raw)
+{
+	char *quoted;
+	int raw_idx, quoted_idx;
+
+	// empty string => ''
+	if (raw[0] == '\0')
+		return strdup("''");
+
+	if ((quoted = (char *)malloc(strlen(raw) * 2 + 1)) == NULL) {
+		perror("");
+		return NULL;
+	}
+	quoted_idx = 0;
+	for (raw_idx = 0; raw[raw_idx] != '\0'; ++raw_idx) {
+		if (isalnum(raw[raw_idx])) {
+			// ok
+		} else if (strchr("!%+,-./:@^", raw[raw_idx]) != NULL) {
+			// ok
+		} else {
+			// needs backslash
+			quoted[quoted_idx++] = '\\';
+		}
+		quoted[quoted_idx++] = raw[raw_idx];
+	}
+	quoted[quoted_idx++] = '\0';
+
+	return quoted;
+}
 
 static int prepend_script(struct script **script, const char *fmt, ...)
 {
@@ -89,202 +156,66 @@ static void free_script(struct script *script)
 	}
 }
 
-static char *read_argfn_quoted(struct uncolog_fp *ufp)
+static int consume_log(const char *logpath, int (*cb)(struct action *action, void *cb_arg), void *cb_arg)
 {
-	char *raw, *quoted;
-	size_t raw_idx, quoted_idx;
-
-	if ((raw = (char *)uncolog_read_argbuf(ufp, NULL)) == NULL)
-		return NULL;
-
-	// empty string => ''
-	if (raw[0] == '\0') {
-		quoted = strdup("''");
-		goto Exit;
-	}
-
-	if ((quoted = (char *)malloc(strlen(raw) * 2 + 1)) == NULL) {
-		perror("");
-		goto Exit;
-	}
-	quoted_idx = 0;
-	for (raw_idx = 0; raw[raw_idx] != '\0'; ++raw_idx) {
-		if (isalnum(raw[raw_idx])) {
-			// ok
-		} else if (strchr("!%+,-./:@^", raw[raw_idx]) != NULL) {
-			// ok
-		} else {
-			// needs backslash
-			quoted[quoted_idx++] = '\\';
-		}
-		quoted[quoted_idx++] = raw[raw_idx];
-	}
-	quoted[quoted_idx++] = '\0';
-
-Exit:
-	free(raw);
-	return quoted;
-}
-
-static int on_meta(struct uncolog_fp *ufp, int argc, struct metainfo *meta)
-{
-	char *sarg;
-	off_t narg;
-
-#define READ_STRARG(n) \
+#define READ_ARGSTR(dst) \
 	do { \
-		if ((sarg = (char *)uncolog_read_argbuf(ufp, NULL)) == NULL) \
-			return -1; \
-		snprintf(meta->n, sizeof(meta->n), "%s", sarg); \
-		free(sarg); \
+		if ((action.dst = (char *)uncolog_read_argbuf(ufp, NULL)) == NULL) \
+			goto Exit; \
+		FREE_PTRS_PUSH(action.dst); \
 	} while (0)
-#define READ_NARG(n) \
+#define READ_ARGN(dst) \
 	do { \
-		if (uncolog_read_argn(ufp, &narg) != 0) \
-			return -1; \
-		meta->n = narg; \
+		off_t t; \
+		if (uncolog_read_argn(ufp, &t) != 0) \
+			goto Exit; \
+		action.dst = t; \
 	} while (0)
 
-	assert(argc == 4);
-	READ_STRARG(cmd);
-	READ_STRARG(cwd);
-	READ_NARG(pid);
-	READ_NARG(ppid);
-
-	return 0;
-
-#undef READ_STRARG
-#undef READ_NARG
-}
-
-static int on_create(struct uncolog_fp *ufp, int argc, struct script **script)
-{
-	char *path_quoted = NULL;
-	int ret = -1;
-
-	// read the args
-	assert(argc == 1);
-	if ((path_quoted = read_argfn_quoted(ufp)) == NULL)
-		goto Exit;
-	// print cmd
-	ret = prepend_script(script,
-		"# revert create\n"
-		"rm %s || exit 1\n",
-		path_quoted);
-
-Exit:
-	free(path_quoted);
-	return ret;
-}
-
-static int on_overwrite(struct uncolog_fp *ufp, int argc, struct script **script)
-{
-	char *target_quoted = NULL, *backup_quoted = NULL;
-	int ret = -1;
-
-	// read the args
-	assert(argc == 2);
-	if ((target_quoted = read_argfn_quoted(ufp)) == NULL
-		|| (backup_quoted = read_argfn_quoted(ufp)) == NULL)
-		goto Exit;
-	// print cmd
-	ret = prepend_script(script,
-		"# revert overwrite\n"
-		"ls %s > /dev/null || exit 1\n" // target should exist
-		"cat %s > %s || exit 1\n",
-		target_quoted, backup_quoted, target_quoted);
-	// TODO: adjust mtime
-
-Exit:
-	free(target_quoted);
-	free(backup_quoted);
-	return ret;
-}
-
-static int on_rename(struct uncolog_fp *ufp, int argc, struct script **script)
-{
-	char *old_quoted = NULL, *new_quoted = NULL, *backup_quoted = NULL;
-	int ret = -1;
-
-	// read the args
-	assert(argc == 2 || argc == 3);
-	if ((old_quoted = read_argfn_quoted(ufp)) == NULL
-		|| (new_quoted = read_argfn_quoted(ufp)) == NULL
-		|| (argc == 3 && (backup_quoted = read_argfn_quoted(ufp)) == NULL))
-		goto Exit;
-	// print cmd
-	if (argc == 2) {
-		ret = prepend_script(script,
-			"# revert rename\n"
-			"mv -n %s %s || exit 1\n",
-			new_quoted, old_quoted);
-	} else {
-		ret = prepend_script(script,
-			"# revert rename (replacing)\n"
-			"mv -n %s %s || exit 1\n"
-			"cat %s > %s || exit 1\n",
-			new_quoted, old_quoted, backup_quoted, new_quoted);
-	}
-
-Exit:
-	free(old_quoted);
-	free(new_quoted);
-	return ret;
-}
-
-static int on_unlink(struct uncolog_fp *ufp, int argc, struct script **script)
-{
-	char *path_quoted = NULL, *backup_quoted = NULL;
-	int ret = -1;
-
-	assert(argc == 2);
-	// read the args
-	if ((path_quoted = read_argfn_quoted(ufp)) == NULL
-		|| (backup_quoted = read_argfn_quoted(ufp)) == NULL)
-		goto Exit;
-	// print cmd
-	ret = prepend_script(script,
-		"# revert unlink\n"
-		"ln %s %s || exit 1\n",
-		backup_quoted, path_quoted);
-
-Exit:
-	free(path_quoted);
-	free(backup_quoted);
-	return ret;
-}
-
-static int consume_log(const char *logpath, struct metainfo *meta, struct script **script)
-{
 	struct uncolog_fp _ufp, *ufp = &_ufp;
-	char action[256];
-	int action_argc, found_meta = 0, ret = -1;
+	struct action action;
+	int found_meta = 0, ret = -1;
+
+	FREE_PTRS_INIT(16);
 
 	if (uncolog_open(ufp, logpath, 'r', open, mkdir) != 0)
 		return -1;
 
-	*script = NULL;
-	while (uncolog_read_action(ufp, action, &action_argc) == 0) {
-		if (strcmp(action, "meta") == 0) {
+	while (1) {
+		memset(&action, 0, sizeof(action));
+		if (uncolog_read_action(ufp, action.name, &action.argc) != 0)
+			break;
+		if (strcmp(action.name, "meta") == 0) {
+			assert(action.argc == 4);
+			READ_ARGSTR(meta.cmd);
+			READ_ARGSTR(meta.cwd);
+			READ_ARGN(meta.pid);
+			READ_ARGN(meta.ppid);
 			found_meta = 1;
-			if (on_meta(ufp, action_argc, meta))
-				goto Exit;
-		} else if (strcmp(action, "create") == 0) {
-			if (on_create(ufp, action_argc, script))
-				goto Exit;
-		} else if (strcmp(action, "overwrite") == 0) {
-			if (on_overwrite(ufp, action_argc, script))
-				goto Exit;
-		} else if (strcmp(action, "rename") == 0) {
-			if (on_rename(ufp, action_argc, script))
-				goto Exit;
-		} else if (strcmp(action, "unlink") == 0) {
-			if (on_unlink(ufp, action_argc, script))
-				goto Exit;
+		} else if (strcmp(action.name, "create") == 0) {
+			assert(action.argc == 1);
+			READ_ARGSTR(create.path);
+		} else if (strcmp(action.name, "overwrite") == 0) {
+			assert(action.argc == 2);
+			READ_ARGSTR(overwrite.path);
+			READ_ARGSTR(overwrite.backup);
+		} else if (strcmp(action.name, "rename") == 0) {
+			assert(action.argc == 2 || action.argc == 3);
+			READ_ARGSTR(rename.old);
+			READ_ARGSTR(rename.new);
+			if (action.argc == 3)
+				READ_ARGSTR(rename.backup);
+		} else if (strcmp(action.name, "unlink") == 0) {
+			assert(action.argc == 2);
+			READ_ARGSTR(unlink.path);
+			READ_ARGSTR(unlink.backup);
 		} else {
-			fprintf(stderr, "unknown action:%s\n", action);
+			fprintf(stderr, "unknown action:%s\n", action.name);
 			goto Exit;
 		}
+		if (cb(&action, cb_arg) != 0)
+			goto Exit;
+		FREE_PTRS();
 	}
 	if (! found_meta) {
 		fprintf(stderr, "mandatory action:meta is missing\n");
@@ -294,12 +225,12 @@ static int consume_log(const char *logpath, struct metainfo *meta, struct script
 
 	ret = 0;
 Exit:
+	FREE_PTRS();
 	uncolog_close(ufp);
-	if (ret != 0) {
-		free_script(*script);
-		*script = NULL;
-	}
-	return 0;
+	return ret;
+
+#undef READ_ARGSTR
+#undef READ_ARGN
 }
 
 static int do_record(int argc, char **argv)
@@ -363,6 +294,111 @@ static int do_record(int argc, char **argv)
 	return 127; // FIXME what is the right code?
 }
 
+#pragma mark revert
+
+struct revert_info {
+	struct script *script;
+	char header[8192];
+};
+
+static int revert_action_handler(struct action *action, void *cb_arg)
+{
+	struct revert_info *info = cb_arg;
+	int ret = -1;
+	FREE_PTRS_INIT(16);
+
+	if (strcmp(action->name, "meta") == 0) {
+
+		snprintf(info->header, sizeof(info->header) - 1,
+			"# generated by unco version " UNCO_VERSION "\n"
+			"#\n"
+			"# undo script for:\n"
+			"#   cmd:  %s\n"
+			"#   cwd:  %s\n"
+			"#   pid:  %d\n"
+			"#   ppid: %d\n"
+			"#\n",
+			action->meta.cmd, action->meta.cwd, (int)action->meta.pid, (int)action->meta.ppid);
+		strcat(info->header, "\n");
+
+	} else if (strcmp(action->name, "create") == 0) {
+
+		char *path_quoted;
+
+		if (FREE_PTRS_PUSH((path_quoted = shellquote(action->create.path))) == NULL)
+			goto Exit;
+		if (prepend_script(&info->script,
+				"# revert create\n"
+				"rm %s || exit 1\n",
+				path_quoted) != 0)
+			goto Exit;
+
+	} else if (strcmp(action->name, "overwrite") == 0) {
+
+		char *path_quoted, *backup_quoted;
+
+		if (FREE_PTRS_PUSH(path_quoted = shellquote(action->overwrite.path)) == NULL
+			|| FREE_PTRS_PUSH(backup_quoted = shellquote(action->overwrite.backup)) == NULL)
+			goto Exit;
+		if (prepend_script(&info->script,
+				"# revert overwrite\n"
+				"ls %s > /dev/null || exit 1\n" // target should exist
+				"cat %s > %s || exit 1\n",
+				path_quoted, backup_quoted, path_quoted) != 0)
+			goto Exit;
+		// TODO: adjust mtime
+
+	} else if (strcmp(action->name, "rename") == 0) {
+
+		char *old_quoted, *new_quoted, *backup_quoted;
+
+		if (FREE_PTRS_PUSH(old_quoted = shellquote(action->rename.old)) == NULL
+			|| FREE_PTRS_PUSH(new_quoted = shellquote(action->rename.new)) == NULL)
+			goto Exit;
+		if (action->rename.backup == NULL) {
+			if (prepend_script(&info->script,
+					"# revert rename\n"
+					"mv -n %s %s || exit 1\n",
+					new_quoted, old_quoted) != 0)
+				goto Exit;
+		} else {
+			if (FREE_PTRS_PUSH(backup_quoted = shellquote(action->rename.backup)) == NULL)
+				goto Exit;
+			if (prepend_script(&info->script,
+					"# revert rename (replacing)\n"
+					"mv -n %s %s || exit 1\n"
+					"cat %s > %s || exit 1\n",
+					new_quoted, old_quoted, backup_quoted, new_quoted) != 0)
+				goto Exit;
+		}
+
+	} else if (strcmp(action->name, "unlink") == 0) {
+
+		char *path_quoted, *backup_quoted;
+
+		if (FREE_PTRS_PUSH(path_quoted = shellquote(action->overwrite.path)) == NULL
+			|| FREE_PTRS_PUSH(backup_quoted = shellquote(action->overwrite.backup)) == NULL)
+			goto Exit;
+		if (prepend_script(&info->script,
+				"# revert unlink\n"
+				"ln %s %s || exit 1\n",
+				backup_quoted, path_quoted) != 0)
+			goto Exit;
+
+	} else {
+
+		fprintf(stderr, "unknown action:%s\n", action->name);
+		goto Exit;
+
+	}
+
+	// success
+	ret = 0;
+Exit:
+	FREE_PTRS();
+	return ret;
+}
+
 static int do_revert(int argc, char **argv)
 {
 	static struct option longopts[] = {
@@ -371,10 +407,10 @@ static int do_revert(int argc, char **argv)
 		{ NULL }
 	};
 	const char *log_file;
-	int opt_ch, run = 0;
-	struct metainfo meta;
-	struct script *script = NULL, *script_block;
+	int opt_ch, run = 0, exit = EX_SOFTWARE;
+	struct revert_info info = { NULL };
 	FILE *outfp;
+	struct script *script_block;
 
 	// fetch opts
 	while ((opt_ch = getopt_long(argc + 1, argv - 1, "l:r", longopts, NULL)) != -1) {
@@ -387,49 +423,50 @@ static int do_revert(int argc, char **argv)
 			break;
 		default:
 			fprintf(stderr, "unknown option: %c\n", opt_ch);
-			return EX_USAGE;
+			exit = EX_USAGE;
+			goto Exit;
 		}
 	}
 	if (log_file == NULL) {
 		fprintf(stderr, "missing mandatory option: --log\n");
-		return EX_USAGE;
+		exit = EX_USAGE;
+		goto Exit;
 	}
 	argc -= optind - 1;
 	argv += optind - 1;
 
 	// read the log
-	if (consume_log(log_file, &meta, &script) != 0)
-		return EX_DATAERR;
+	if (consume_log(log_file, revert_action_handler, &info) != 0) {
+		exit = EX_DATAERR;
+		goto Exit;
+	}
 
 	// setup output
 	if (run) {
 		if ((outfp = popen("sh", "w")) == NULL) {
 			perror("failed to invoke sh");
-			return EX_OSERR;
+			exit = EX_OSERR;
+			goto Exit;
 		}
 	} else {
 		outfp = stdout;
 	}
 	// dump the commands
-	fprintf(stderr,
-		"# generated by unco version " UNCO_VERSION "\n"
-		"#\n"
-		"# undo script for:\n"
-		"#   cmd:  %s\n"
-		"#   cwd:  %s\n"
-		"#   pid:  %d\n"
-		"#   ppid: %d\n"
-		"#\n"
-		"\n",
-		meta.cmd, meta.cwd, (int)meta.pid, (int)meta.ppid);
-	for (script_block = script; script_block != NULL; script_block = script_block->next) {
+	fputs(info.header, outfp);
+	for (script_block = info.script; script_block != NULL; script_block = script_block->next) {
 		fputs(script_block->block, outfp);
 	}
-	// close outfp
-	if (run)
-		pclose(outfp);
+	// close the pipe
+	if (run) {
+		if (pclose(outfp) != 0)
+			exit = EX_OSERR; // error is reported by shell
+	}
 
-	return 0;
+	// success
+	exit = 0;
+Exit:
+	free_script(info.script);
+	return exit;
 }
 
 static int help(int retval)

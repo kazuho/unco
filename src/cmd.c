@@ -120,7 +120,7 @@ static char *shellquote(const char *raw)
 	return quoted;
 }
 
-static char *prepend_printf(struct unco_list *l, const char *fmt, ...)
+static char *prepend_printf(struct uncolist *l, const char *fmt, ...)
 {
 	va_list arg;
 	char buf[16384];
@@ -129,7 +129,7 @@ static char *prepend_printf(struct unco_list *l, const char *fmt, ...)
 	snprintf(buf, sizeof(buf), fmt, arg);
 	va_end(arg);
 
-	return unco_list_insert(l, unco_list_next(l, NULL), buf, strlen(buf) + 1);
+	return uncolist_insert(l, uncolist_next(l, NULL), buf, strlen(buf) + 1);
 }
 
 static int consume_log(const char *logpath, int (*cb)(struct action *action, void *cb_arg), void *cb_arg)
@@ -265,7 +265,7 @@ static int do_record(int argc, char **argv)
 }
 
 struct revert_info {
-	struct unco_list lines;
+	struct uncolist lines;
 	int is_finalized;
 	char header[8192];
 };
@@ -430,7 +430,7 @@ static int do_revert(int argc, char **argv)
 	}
 	// dump the commands
 	fputs(info.header, outfp);
-	for (lines = NULL; (lines = unco_list_next(&info.lines, lines)) != NULL; ) {
+	for (lines = NULL; (lines = uncolist_next(&info.lines, lines)) != NULL; ) {
 		fputs(lines, outfp);
 	}
 	// close the pipe
@@ -442,7 +442,7 @@ static int do_revert(int argc, char **argv)
 	// success
 	exit = 0;
 Exit:
-	unco_list_clear(&info.lines);
+	uncolist_clear(&info.lines);
 	return exit;
 }
 

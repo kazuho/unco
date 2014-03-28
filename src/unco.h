@@ -64,22 +64,22 @@ int unco_utimes(int fd, const struct stat *st, int (*futimes)(int, const struct 
 int unco_get_default_dir(char *dir);
 long long unco_get_next_logindex(const char *dir);
 
-struct _unco_list_item {
-	struct _unco_list_item *prev;
-	struct _unco_list_item *next;
+struct _uncolist_item {
+	struct _uncolist_item *prev;
+	struct _uncolist_item *next;
 	char bytes[1];
 };
 
-struct unco_list {
-	struct _unco_list_item *_head;
+struct uncolist {
+	struct _uncolist_item *_head;
 	size_t count;
 };
 
-void unco_list_clear(struct unco_list *l);
-void *unco_list_next(struct unco_list *l, const void *cur);
-void *unco_list_prev(struct unco_list *l, const void *cur);
-void *unco_list_insert(struct unco_list *l, const void *before, const void *data, size_t sz);
-void unco_list_erase(struct unco_list *l, const void *cur);
+void uncolist_clear(struct uncolist *l);
+void *uncolist_next(struct uncolist *l, const void *cur);
+void *uncolist_prev(struct uncolist *l, const void *cur);
+void *uncolist_insert(struct uncolist *l, const void *before, const void *data, size_t sz);
+void uncolist_erase(struct uncolist *l, const void *cur);
 
 #ifdef __cplusplus
 }

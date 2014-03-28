@@ -71,7 +71,7 @@ static void log_meta(struct uncolog_fp *ufp)
 
 	// log cwd
 	getcwd(cwd, sizeof(cwd));
-	uncolog_write_argbuf(ufp, cwd, sizeof(cwd));
+	uncolog_write_argbuf(ufp, cwd, strlen(cwd));
 
 	// log pid
 	uncolog_write_argn(ufp, getpid());

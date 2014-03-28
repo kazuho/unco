@@ -514,7 +514,7 @@ static int help(int retval)
 		"SYNOPSIS:\n"
 		"\n"
 		"    # records changes to fs made by command\n"
-		"    unco record --log=<log-path> command...\n"
+		"    unco record [--log=<log-path>] command...\n"
 		"\n"
 		"    # displays shell-script to undo the changes\n"
 		"    unco revert --log=<log-path>\n"

@@ -264,8 +264,6 @@ static int do_record(int argc, char **argv)
 	return 127; // FIXME what is the right code?
 }
 
-#pragma mark revert
-
 struct revert_info {
 	struct unco_list lines;
 	int is_finalized;

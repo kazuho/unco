@@ -32,6 +32,7 @@
 #include <sys/param.h>
 #include <sys/stat.h>
 #include <unistd.h>
+#include "kazutils.h"
 #include "unco.h"
 
 static int errorclose(struct uncolog_fp *ufp)
@@ -48,7 +49,7 @@ static int safewrite(struct uncolog_fp *ufp, const void *data, size_t len)
 	if (ufp->_fd == -1) {
 		return -1;
 	}
-	if (unco_full_write(ufp->_fd, data, len) != 0) {
+	if (kwrite_full(ufp->_fd, data, len) != 0) {
 		perror("unco:log_write_error");
 		return errorclose(ufp);
 	}
@@ -64,7 +65,7 @@ static int read_short_line(struct uncolog_fp *ufp, char *buf, size_t sz)
 		return -1;
 
 	// read to buffer
-	rlen = unco_read_nosig(ufp->_fd, buf, sz - 1);
+	rlen = kread_nosig(ufp->_fd, buf, sz - 1);
 	if (rlen == -1) {
 		perror("unco:failed to read log");
 		return errorclose(ufp);
@@ -256,7 +257,7 @@ void *uncolog_read_argbuf(struct uncolog_fp *ufp, size_t *outlen)
 		*outlen = len;
 	// read data (len + 1 bytes)
 	for (off = 0; off != len + 1;) {
-		rlen = unco_read_nosig(ufp->_fd, buf + off, len + 1 - off);
+		rlen = kread_nosig(ufp->_fd, buf + off, len + 1 - off);
 		if (rlen == -1) {
 			perror("unco:failed to read log");
 			goto Error;

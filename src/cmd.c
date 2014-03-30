@@ -32,6 +32,7 @@
 #include <string.h>
 #include <sys/stat.h>
 #include <unistd.h>
+#include "kazutils.h"
 #include "sha1.h"
 #include "config.h"
 #include "unco.h"
@@ -128,7 +129,7 @@ static char *shellquote(const char *raw)
 	return quoted;
 }
 
-static char *prepend_printf(struct uncolist *l, const char *fmt, ...)
+static char *prepend_printf(klist *l, const char *fmt, ...)
 {
 	va_list arg;
 	char buf[16384];
@@ -137,7 +138,7 @@ static char *prepend_printf(struct uncolist *l, const char *fmt, ...)
 	vsnprintf(buf, sizeof(buf), fmt, arg);
 	va_end(arg);
 
-	return uncolist_insert(l, uncolist_next(l, NULL), buf, strlen(buf) + 1);
+	return klist_insert(l, klist_next(l, NULL), buf, strlen(buf) + 1);
 }
 
 static int sha1hex_file(const char *fn, char *sha1hex)
@@ -152,7 +153,7 @@ static int sha1hex_file(const char *fn, char *sha1hex)
 	// read
 	if ((fd = open(fn, O_RDONLY)) == -1)
 		return -1;
-	while ((rlen = unco_read_nosig(fd, buf, sizeof(buf))) != 0) {
+	while ((rlen = kread_nosig(fd, buf, sizeof(buf))) != 0) {
 		if (rlen == -1)
 			return -1;
 		SHA1Input(&ctx, buf, rlen);
@@ -310,7 +311,7 @@ static int do_record(int argc, char **argv)
 }
 
 struct revert_info {
-	struct uncolist lines;
+	klist lines;
 	int is_finalized;
 	char header[8192];
 };
@@ -507,7 +508,7 @@ static int do_revert(int argc, char **argv)
 	}
 	// dump the commands
 	fputs(info.header, outfp);
-	for (lines = NULL; (lines = uncolist_next(&info.lines, lines)) != NULL; ) {
+	for (lines = NULL; (lines = klist_next(&info.lines, lines)) != NULL; ) {
 		fputs(lines, outfp);
 	}
 	// close the pipe
@@ -519,30 +520,30 @@ static int do_revert(int argc, char **argv)
 	// success
 	exit = 0;
 Exit:
-	uncolist_clear(&info.lines);
+	klist_clear(&info.lines);
 	return exit;
 }
 
 struct finalize_info {
-	struct uncolist existing_files;
-	struct uncolist removed_files;
+	klist existing_files;
+	klist removed_files;
 	int is_finalized;
 };
 
-static int _finalize_mark_file_in_list(struct uncolist *l, const char *fn, int exists)
+static int _finalize_mark_file_in_list(klist *l, const char *fn, int exists)
 {
 	char *item;
 
-	for (item = NULL; (item = uncolist_next(l, item)) != NULL; )
+	for (item = NULL; (item = klist_next(l, item)) != NULL; )
 		if (strcpy(item, fn) == 0)
 			break;
 
 	if ((item != NULL) != exists) {
 		if (exists) {
-			if (uncolist_insert(l, NULL, fn, strlen(fn) + 1) == NULL)
+			if (klist_insert(l, NULL, fn, strlen(fn) + 1) == NULL)
 				return -1;
 		} else {
-			uncolist_erase(l, item);
+			klist_erase(l, item);
 		}
 	}
 
@@ -595,7 +596,7 @@ static int _finalize_append_action(struct uncolog_fp* ufp, struct finalize_info*
 	struct stat st;
 
 	// append existing files
-	for (fn = NULL; (fn = uncolist_next(&info->existing_files, fn)) != NULL; ) {
+	for (fn = NULL; (fn = klist_next(&info->existing_files, fn)) != NULL; ) {
 		if (sha1hex_file(fn, sha1hex) != 0) {
 			uncolog_set_error(ufp, "failed to sha1 file:%s:%d\n", fn, errno);
 			return -1;
@@ -606,7 +607,7 @@ static int _finalize_append_action(struct uncolog_fp* ufp, struct finalize_info*
 			return -1;
 	}
 	// append removed files
-	for (fn = NULL; (fn = uncolist_next(&info->removed_files, fn)) != NULL; ) {
+	for (fn = NULL; (fn = klist_next(&info->removed_files, fn)) != NULL; ) {
 		if (lstat(fn, &st) == 0) {
 			uncolog_set_error(ufp, "unexpected condition, file logged as being removed exists:%s\n", fn);
 			return -1;

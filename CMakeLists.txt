@@ -8,10 +8,10 @@ SET(CMAKE_C_FLAGS "${CMAKE_C_FLAGS} -Wall -g")
 SET(BINDIR_REL "bin")
 SET(LIBDIR_REL "lib")
 
-INCLUDE_DIRECTORIES(third-party/sha1)
+INCLUDE_DIRECTORIES(third-party/kazutils.c third-party/sha1)
 
-ADD_LIBRARY(unco-preload SHARED src/preload.c src/log.c src/misc.c)
-ADD_EXECUTABLE(unco src/cmd.c src/log.c src/misc.c third-party/sha1/sha1.c)
+ADD_LIBRARY(unco-preload SHARED src/preload.c src/log.c src/misc.c third-party/kazutils.c/file.c)
+ADD_EXECUTABLE(unco src/cmd.c src/log.c src/misc.c third-party/kazutils.c/file.c third-party/kazutils.c/list.c third-party/sha1/sha1.c)
 
 CONFIGURE_FILE(src/config.h.cmake src/config.h)
 

@@ -33,6 +33,7 @@
 #include <sys/time.h>
 #include <unistd.h>
 #include <crt_externs.h>
+#include "kazutils.h"
 #include "unco.h"
 #include "config.h"
 
@@ -176,7 +177,7 @@ static int backup_file(int srcfd, const char *srcpath)
 		goto Error;
 	}
 	// copy contents
-	if (unco_copyfd(srcfd, linkfd) != 0) {
+	if (kcopyfd(srcfd, linkfd) != 0) {
 		fprintf(stderr, "failed to backup file:%s:%d\n", srcpath, errno);
 		goto Error;
 	}

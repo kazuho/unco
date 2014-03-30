@@ -56,25 +56,10 @@ void *uncolog_read_argbuf(struct uncolog_fp *ufp, size_t *sz);
 
 int uncolog_delete(const char *path, int force);
 
-ssize_t unco_read_nosig(int fd, void *data, size_t len);
-int unco_full_write(int fd, const void *data, size_t len);
-int unco_copyfd(int srcfd, int dstfd);
 int unco_utimes(int fd, const struct stat *st, int (*futimes)(int, const struct timeval times[2]));
 
 int unco_get_default_dir(char *dir);
 long long unco_get_next_logindex(const char *dir);
-
-struct uncolist {
-	struct _uncolist_item *_head;
-	size_t count;
-	void (*destroy_item)(void *item);
-};
-
-void uncolist_clear(struct uncolist *l);
-void *uncolist_next(struct uncolist *l, const void *cur);
-void *uncolist_prev(struct uncolist *l, const void *cur);
-void *uncolist_insert(struct uncolist *l, const void *before, const void *data, size_t sz);
-void uncolist_erase(struct uncolist *l, const void *cur);
 
 #ifdef __cplusplus
 }

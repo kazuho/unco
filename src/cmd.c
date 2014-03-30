@@ -502,6 +502,65 @@ Exit:
 	return exit;
 }
 
+struct history_info {
+	int logindex;
+	char *logfn;
+	pid_t grep_ppid; // -1 if not filtered
+	char *grep_cmd; // NULL if not filtered
+	char *grep_cwd; // NULL if not filtered
+};
+
+static int _history_action_handler(struct action *action, void *cb_arg)
+{
+	struct history_info *info = cb_arg;
+	int matched;
+
+	if (strcmp(action->name, "meta") == 0) {
+		matched = 1;
+		if (matched && info->grep_ppid != -1 && action->meta.ppid != info->grep_ppid)
+			matched = 0;
+		if (matched && info->grep_cmd != NULL && strncmp(action->meta.cmd, info->grep_cmd, strlen(info->grep_cmd)) != 0)
+			matched = 0;
+		if (matched && info->grep_cwd != NULL && strcmp(action->meta.cwd, info->grep_cwd) != 0)
+			matched = 0;
+		if (matched)
+			printf("%4d %s\n", info->logindex, action->meta.cmd);
+		return -1; // bail-out
+	}
+
+	return 0;
+}
+
+static int do_history(int argc, char **argv)
+{
+	char *unco_dir, *logfn = NULL;
+	int logindex;
+	struct stat st;
+	struct history_info info;
+
+	if ((unco_dir = unco_get_default_dir()) == NULL)
+		return EX_OSERR;
+
+	memset(&info, 0, sizeof(info));
+	info.grep_ppid = getppid(); // default rule
+
+	// TODO getopt
+
+	for (logindex = 1; ; ++logindex) {
+		if ((logfn = ksprintf("%s/%d", unco_dir, logindex)) == NULL)
+			break;
+		info.logindex = logindex;
+		info.logfn = logfn;
+		if (lstat(logfn, &st) != 0)
+			break;
+		consume_log(logfn, _history_action_handler, &info);
+	}
+
+	free(unco_dir);
+	free(logfn);
+	return 0;
+}
+
 struct finalize_info {
 	klist existing_files;
 	klist removed_files;
@@ -675,6 +734,8 @@ int main(int argc, char **argv)
 		return do_record(argc, argv);
 	else if (strcmp(cmd, "revert") == 0)
 		return do_revert(argc, argv);
+	else if (strcmp(cmd, "history") == 0)
+		return do_history(argc, argv);
 	else if (strcmp(cmd, "_finalize") == 0)
 		return do_finalize();
 	else if (strcmp(cmd, "help") == 0)

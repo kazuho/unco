@@ -40,6 +40,7 @@ void klist_clear(klist *l)
 	_klist_item *item, *tmp;
 
 	if ((item = l->_head) != NULL) {
+		l->count = 0;
 		do {
 			tmp = item->next == l->_head ? NULL : item->next;
 			if (l->destroy_item != NULL)

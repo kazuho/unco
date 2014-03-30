@@ -80,7 +80,8 @@ void *klist_insert(klist *l, const void *before_bytes, const void *data, size_t 
 
 	if ((item = malloc(_ITEM_HEADER_SIZE + sz)) == NULL)
 		return NULL;
-	memcpy(item->bytes, data, sz);
+	if (data != NULL)
+		memcpy(item->bytes, data, sz);
 	++l->count;
 
 	if (l->_head != NULL) {

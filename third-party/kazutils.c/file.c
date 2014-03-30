@@ -23,6 +23,7 @@
  */
 #include <errno.h>
 #include <unistd.h>
+#include "kazutils.h"
 
 ssize_t kread_nosig(int fd, void *data, size_t len)
 {

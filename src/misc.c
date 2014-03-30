@@ -27,6 +27,7 @@
 #include <stdlib.h>
 #include <string.h>
 #include <unistd.h>
+#include "kazutils.h"
 #include "unco.h"
 
 int unco_utimes(int fd, const struct stat *st, int (*futimes)(int, const struct timeval times[2]))
@@ -40,33 +41,41 @@ int unco_utimes(int fd, const struct stat *st, int (*futimes)(int, const struct 
 	return futimes(fd, times);
 }
 
-int unco_get_default_dir(char *dir)
+char *unco_get_default_dir()
 {
-	char *env;
+	char *env, *dir;
 
 	// $HOME/.unco
 	if ((env = getenv("HOME")) == NULL) {
 		fprintf(stderr, "unco:$HOME is not set\n");
-		return -1;
+		return NULL;
 	}
-	snprintf(dir, PATH_MAX, "%s/.unco", env);
+	if ((dir = ksprintf("%s/.unco", env)) == NULL) {
+		perror("unco");
+		return NULL;
+	}
 
 	// mkdir
 	if (mkdir(dir, 0700) == 0 || errno == EEXIST) {
 		// ok
 	} else {
 		fprintf(stderr, "failed to create dir:%s:%d\n", dir, errno);
-		return -1;
+		free(dir);
+		return NULL;
 	}
-	return 0;
+	return dir;
 }
 
 static int _log_exists(const char *dir, long long log_index, int *exists)
 {
 	struct stat st;
-	char path[PATH_MAX];
+	char *path;
+	int ret = -1;
 
-	snprintf(path, sizeof(path), "%s/%lld", dir, log_index);
+	if ((path = ksprintf("%s/%lld", dir, log_index)) == NULL) {
+		perror("unco");
+		return -1;
+	}
 
 	if (lstat(path, &st) == 0) {
 		*exists = 1;
@@ -74,9 +83,12 @@ static int _log_exists(const char *dir, long long log_index, int *exists)
 		*exists = 0;
 	} else {
 		fprintf(stderr, "failed to stat file:%s:%d\n", path, errno);
-		return -1;
+		goto Exit;
 	}
 
+	ret = 0;
+Exit:
+	free(path);
 	return 0;
 }
 

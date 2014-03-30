@@ -83,7 +83,7 @@ static void spawn_finalizer()
 
 static void log_meta(void)
 {
-	char cmdbuf[4096], **argv, cwd[PATH_MAX];
+	char cmdbuf[4096], **argv, *cwd;
 	int i, argc;
 
 	uncolog_write_action(&ufp, "meta", 4);
@@ -99,8 +99,9 @@ static void log_meta(void)
 	uncolog_write_argbuf(&ufp, cmdbuf, strlen(cmdbuf));
 
 	// log cwd
-	getcwd(cwd, sizeof(cwd));
-	uncolog_write_argbuf(&ufp, cwd, strlen(cwd));
+	cwd = getcwd(NULL, 0);
+	uncolog_write_argbuf(&ufp, cwd != NULL ? cwd : "", cwd != NULL ? strlen(cwd): 0);
+	free(cwd);
 
 	// log pid
 	uncolog_write_argn(&ufp, getpid());
@@ -112,7 +113,7 @@ static void log_meta(void)
 __attribute__((constructor))
 extern void _setup_unco_preload()
 {
-	char *logfn, *env, dir[PATH_MAX], fnbuf[PATH_MAX];
+	char *logfn, *env, *dir = NULL, *fnbuf = NULL;
 	long long log_index;
 	int open_mode;
 
@@ -126,21 +127,27 @@ extern void _setup_unco_preload()
 		if (env[0] == '/') {
 			logfn = env;
 		} else {
-			if (getcwd(dir, sizeof(dir)) == NULL) {
+			if ((dir = getcwd(NULL, 0)) == NULL) {
 				perror("unco:could not obtain cwd");
 				goto Error;
 			}
-			snprintf(fnbuf, sizeof(fnbuf), "%s/%s", dir, env);
+			if ((fnbuf = ksprintf("%s/%s", dir, env)) == NULL) {
+				perror("unco");
+				goto Error;
+			}
 			logfn = fnbuf;
 		}
 		open_mode = 'a';
 	} else {
 		// default
-		if (unco_get_default_dir(dir) != 0)
+		if ((dir = unco_get_default_dir()) == NULL)
 			goto Error;
 		if ((log_index = unco_get_next_logindex(dir)) == -1)
 			goto Error;
-		snprintf(fnbuf, sizeof(fnbuf), "%s/%lld", dir, log_index);
+		if ((fnbuf = ksprintf("%s/%lld", dir, log_index)) == NULL) {
+			perror("unco");
+			goto Error;
+		}
 		logfn = fnbuf;
 		// set UNCO_LOG, so that child processes would write to the same file
 		setenv("UNCO_LOG", logfn, 1);
@@ -156,21 +163,25 @@ extern void _setup_unco_preload()
 		spawn_finalizer();
 	}
 
+	free(dir);
+	free(fnbuf);
 	return;
 Error:
+	free(dir);
+	free(fnbuf);
 	uncolog_init_fp(&ufp);
 }
 
 static int backup_file(int srcfd, const char *srcpath)
 {
 	struct stat st;
-	char linkfn[PATH_MAX];
+	char *linkfn;
 	int linkfd = -1;
 
 	fstat(srcfd, &st); // TODO need to check error?
 
 	// create backup file
-	if (uncolog_get_linkname(&ufp, linkfn) != 0)
+	if ((linkfn = uncolog_get_linkname(&ufp)) == NULL)
 		goto Error;
 	if ((linkfd = default_open(linkfn, O_WRONLY | O_CREAT | O_TRUNC, 0600)) == -1) {
 		fprintf(stderr, "failed to create backup file:%s:%d\n", linkfn, errno);
@@ -198,6 +209,7 @@ static int backup_file(int srcfd, const char *srcpath)
 Error:
 	if (linkfd != -1)
 		close(linkfd);
+	free(linkfn);
 	return -1;
 }
 
@@ -261,52 +273,53 @@ WRAP(fopen, FILE*, (const char *path, const char *mode), {
 })
 
 WRAP(rename, int, (const char *old, const char *new), {
-	char backup[PATH_MAX];
+	char* backup;
+	int ret;
 
 	// create backup link
-	if (uncolog_get_linkname(&ufp, backup) == 0) {
+	if ((backup = uncolog_get_linkname(&ufp)) != NULL) {
 		if (link(new, backup) != 0) {
 			if (errno != ENOENT)
 				uncolog_set_error(&ufp, "failed to create backup link for file:%s:%d\n", new, errno);
-			backup[0] = '\0';
+			free(backup);
+			backup = NULL;
 		}
-	} else {
-		backup[0] = '\0';
 	}
 
 	// take the action
-	int ret = orig(old, new);
+	ret = orig(old, new);
 
 	if (ret == 0) {
 		uncolog_write_action(&ufp, "rename", backup[0] != '\0' ? 3 : 2);
 		uncolog_write_argfn(&ufp, old);
 		uncolog_write_argfn(&ufp, new);
-		if (backup[0] != '\0')
+		if (backup != NULL)
 			uncolog_write_argfn(&ufp, backup);
 	}
+	free(backup);
 	return ret;
 })
 
 WRAP(unlink, int, (const char *path), {
-	char backup[PATH_MAX];
+	char *backup;
 	int linkerrno = 0;
+	int ret;
 
 	// create backup link
-	if (uncolog_get_linkname(&ufp, backup) == 0) {
+	if ((backup = uncolog_get_linkname(&ufp)) != NULL) {
 		if (link(path, backup) != 0) {
-			backup[0] = '\0';
+			free(backup);
+			backup = NULL;
 			linkerrno = errno;
 		}
-	} else {
-		backup[0] = '\0';
 	}
 
 	// unlink
-	int ret = orig(path);
+	ret = orig(path);
 
 	if (ret == 0) {
 		// log the link
-		if (backup[0] != '\0') {
+		if (backup != NULL) {
 			uncolog_write_action(&ufp, "unlink", 2);
 			uncolog_write_argfn(&ufp, path);
 			uncolog_write_argfn(&ufp, backup);
@@ -314,9 +327,10 @@ WRAP(unlink, int, (const char *path), {
 			uncolog_set_error(&ufp, "failed to create link of:%s:%d\n", path, linkerrno);
 		}
 	} else {
-		if (backup[0] != '\0')
+		if (backup != NULL)
 			unlink(backup);
 	}
 
+	free(backup);
 	return ret;
 })

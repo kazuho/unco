@@ -29,7 +29,6 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
-#include <sys/param.h>
 #include <sys/stat.h>
 #include <unistd.h>
 #include "kazutils.h"
@@ -40,6 +39,8 @@ static int errorclose(struct uncolog_fp *ufp)
 	if (ufp->_fd != -1) {
 		close(ufp->_fd);
 		ufp->_fd = -1;
+		free(ufp->_path);
+		ufp->_path = NULL;
 	}
 	return -1;
 }
@@ -70,7 +71,9 @@ static int read_short_line(struct uncolog_fp *ufp, char *buf, size_t sz)
 		perror("unco:failed to read log");
 		return errorclose(ufp);
 	} else if (rlen == 0) {
-		return errorclose(ufp); // eof
+		// eof
+		buf[0] = '\0';
+		return 0;
 	}
 	buf[rlen] = '\0';
 
@@ -94,7 +97,7 @@ void uncolog_init_fp(struct uncolog_fp *ufp)
 {
 	ufp->_fd = -1;
 	ufp->_default_open = NULL;
-	strcpy(ufp->_path, "/nonexistent");
+	ufp->_path = NULL;
 }
 
 void uncolog_set_error(struct uncolog_fp *ufp, const char *fmt, ...)
@@ -112,15 +115,10 @@ void uncolog_set_error(struct uncolog_fp *ufp, const char *fmt, ...)
 int uncolog_open(struct uncolog_fp *ufp, const char *path, int mode, int (*default_open)(const char *, int, ...), int (*default_mkdir)(const char *, mode_t))
 {
 	int oflag = 0, logfd;
-	char logfn[PATH_MAX];
+	char *logfn;
 
 	// reset
 	uncolog_init_fp(ufp);
-
-	if (strlen(path) >= PATH_MAX - 20) {
-		fprintf(stderr, "unco:given path is too long:%s\n", path);
-		return -1;
-	}
 
 	// setup oflag
 	switch (mode) {
@@ -147,18 +145,25 @@ int uncolog_open(struct uncolog_fp *ufp, const char *path, int mode, int (*defau
 		}
 	}
 	// open file
-	snprintf(logfn, sizeof(logfn), "%s/log", path);
+	if ((logfn = ksprintf("%s/log", path)) == NULL) {
+		perror("unco");
+		free(logfn);
+		return -1;
+	}
 	if ((logfd = default_open(logfn, oflag, 0600)) == -1) {
 		fprintf(stderr, "unco:failed to open file:%s:%d\n", logfn, errno);
-		if ((oflag & O_WRONLY) != 0)
+		if ((oflag & O_WRONLY) != 0) {
+			free(logfn);
 			rmdir(path);
+		}
 		return -1;
 	}
 
 	// success, setup ufp
 	ufp->_fd = logfd;
 	ufp->_default_open = default_open;
-	strcpy(ufp->_path, path);
+	strcpy(logfn, path); // reuse the buffer for storing the path
+	ufp->_path = logfn;
 
 	return 0;
 }
@@ -170,6 +175,9 @@ int uncolog_close(struct uncolog_fp *ufp)
 
 	close(ufp->_fd);
 	ufp->_fd = -1;
+	free(ufp->_path);
+	ufp->_path = NULL;
+
 	return 0;
 }
 
@@ -197,6 +205,10 @@ int uncolog_read_action(struct uncolog_fp *ufp, char *action, int *argc)
 
 	if (read_short_line(ufp, buf, sizeof(buf)) != 0)
 		return -1;
+	else if (buf[0] == '\0') {
+		errorclose(ufp);
+		return -1; // find a better way to notify EOF?
+	}
 	if ((colon = strchr(buf, ':')) == NULL
 		|| sscanf(colon + 1, "%d", argc) != 1) {
 		fprintf(stderr, "unexpected log line:%s\n", buf);
@@ -284,7 +296,8 @@ Error:
 
 int uncolog_write_argfn(struct uncolog_fp *ufp, const char *path)
 {
-	char cwd[PATH_MAX], abspath[PATH_MAX * 2];
+	char *cwd = NULL, *abspath = NULL;
+	int ret = -1;
 
 	if (ufp->_fd == -1)
 		return -1;
@@ -295,29 +308,41 @@ int uncolog_write_argfn(struct uncolog_fp *ufp, const char *path)
 	 * be preserved since it might not point back if foo is a symlink.
 	 */
 	if (path[0] != '/') {
-		getcwd(cwd, sizeof(cwd));
-		if (strlen(cwd) + 1 + strlen(path) > sizeof(abspath) - 1) {
-			fprintf(stderr, "unco:given path is too long:%s/%s\n", cwd, path);
+		if ((cwd = getcwd(NULL, 0)) == NULL
+			|| (abspath = ksprintf("%s/%s", cwd, path)) == NULL) {
+			perror("unco");
+			goto Exit;
 		}
-		sprintf(abspath, "%s/%s", cwd, path);
 		path = abspath;
 	}
 
-	return uncolog_write_argbuf(ufp, path, strlen(path));
+	if (uncolog_write_argbuf(ufp, path, strlen(path)) != 0)
+		goto Exit;
+
+	ret = 0;
+Exit:
+	free(cwd);
+	free(abspath);
+	return ret;
 }
 
-int uncolog_get_linkname(struct uncolog_fp *ufp, char *link)
+char *uncolog_get_linkname(struct uncolog_fp *ufp)
 {
+	char *link;
 	unsigned id;
 	struct stat st;
 
 	if (ufp->_fd == -1)
-		return -1;
+		return NULL;
 
 	for (id = 0; ; ++id) {
-		snprintf(link, PATH_MAX, "%s/l%08x", ufp->_path, id);
+		if ((link = ksprintf("%s/l%08x", ufp->_path, id)) == NULL) {
+			perror("unco");
+			return NULL;
+		}
 		if (stat(link, &st) != 0)
-			return 0;
+			return link;
+		free(link);
 	}
 }
 
@@ -325,7 +350,7 @@ int uncolog_delete(const char *path, int force)
 {
 	DIR *dp;
 	struct dirent *ent;
-	char fnbuf[PATH_MAX];
+	char *fnbuf = NULL;
 	int ret = -1;
 
 	if ((dp = opendir(path)) == NULL) {
@@ -340,11 +365,15 @@ int uncolog_delete(const char *path, int force)
 			|| strcmp(ent->d_name, "..") == 0) {
 			// skip
 		} else {
-			snprintf(fnbuf, sizeof(fnbuf), "%s/%s", path, ent->d_name);
+			if ((fnbuf = ksprintf("%s/%s", path, ent->d_name)) == NULL) {
+				perror("unco");
+				goto Exit;
+			}
 			if (unlink(fnbuf) != 0) {
 				fprintf(stderr, "unco:failed to unlink file:%s:%d\n", fnbuf, errno);
 				goto Exit;
 			}
+			free(fnbuf);
 		}
 	}
 
@@ -352,5 +381,6 @@ int uncolog_delete(const char *path, int force)
 Exit:
 	if (dp != NULL)
 		closedir(dp);
+	free(fnbuf);
 	return ret;
 }

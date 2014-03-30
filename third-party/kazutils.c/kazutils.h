@@ -38,6 +38,7 @@ void klist_clear(klist *l);
 void *klist_next(klist *l, const void *cur);
 void *klist_prev(klist *l, const void *cur);
 void *klist_insert(klist *l, const void *before, const void *data, size_t sz);
+char *klist_insert_printf(klist *l, const void *before, const char *fmt, ...);
 void klist_erase(klist *l, const void *cur);
 
 ssize_t kread_nosig(int fd, void *data, size_t len);

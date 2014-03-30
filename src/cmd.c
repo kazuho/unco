@@ -129,18 +129,6 @@ static char *shellquote(const char *raw)
 	return quoted;
 }
 
-static char *prepend_printf(klist *l, const char *fmt, ...)
-{
-	va_list arg;
-	char buf[16384];
-
-	va_start(arg, fmt);
-	vsnprintf(buf, sizeof(buf), fmt, arg);
-	va_end(arg);
-
-	return klist_insert(l, klist_next(l, NULL), buf, strlen(buf) + 1);
-}
-
 static int sha1hex_file(const char *fn, char *sha1hex)
 {
 	SHA1Context ctx;
@@ -342,7 +330,7 @@ static int _revert_action_handler(struct action *action, void *cb_arg)
 
 		if (FREE_PTRS_PUSH((path_quoted = shellquote(action->create.path))) == NULL)
 			goto Exit;
-		if (prepend_printf(&info->lines,
+		if (klist_insert_printf(&info->lines, klist_next(&info->lines, NULL),
 				"# revert create\n"
 				"rm %s || exit 1\n",
 				path_quoted) == NULL)
@@ -355,7 +343,7 @@ static int _revert_action_handler(struct action *action, void *cb_arg)
 		if (FREE_PTRS_PUSH(path_quoted = shellquote(action->overwrite.path)) == NULL
 			|| FREE_PTRS_PUSH(backup_quoted = shellquote(action->overwrite.backup)) == NULL)
 			goto Exit;
-		if (prepend_printf(&info->lines,
+		if (klist_insert_printf(&info->lines, klist_next(&info->lines, NULL),
 				"# revert overwrite\n"
 				"ls %s > /dev/null || exit 1\n" // target should exist
 				"cat %s > %s || exit 1\n",
@@ -371,7 +359,7 @@ static int _revert_action_handler(struct action *action, void *cb_arg)
 			|| FREE_PTRS_PUSH(new_quoted = shellquote(action->rename.new)) == NULL)
 			goto Exit;
 		if (action->rename.backup == NULL) {
-			if (prepend_printf(&info->lines,
+			if (klist_insert_printf(&info->lines, klist_next(&info->lines, NULL),
 					"# revert rename\n"
 					"mv -n %s %s || exit 1\n",
 					new_quoted, old_quoted) == NULL)
@@ -379,7 +367,7 @@ static int _revert_action_handler(struct action *action, void *cb_arg)
 		} else {
 			if (FREE_PTRS_PUSH(backup_quoted = shellquote(action->rename.backup)) == NULL)
 				goto Exit;
-			if (prepend_printf(&info->lines,
+			if (klist_insert_printf(&info->lines, klist_next(&info->lines, NULL),
 					"# revert rename (replacing)\n"
 					"mv -n %s %s || exit 1\n"
 					"cat %s > %s || exit 1\n",
@@ -394,7 +382,7 @@ static int _revert_action_handler(struct action *action, void *cb_arg)
 		if (FREE_PTRS_PUSH(path_quoted = shellquote(action->overwrite.path)) == NULL
 			|| FREE_PTRS_PUSH(backup_quoted = shellquote(action->overwrite.backup)) == NULL)
 			goto Exit;
-		if (prepend_printf(&info->lines,
+		if (klist_insert_printf(&info->lines, klist_next(&info->lines, NULL),
 				"# revert unlink\n"
 				"ln %s %s || exit 1\n",
 				backup_quoted, path_quoted) == NULL)
@@ -406,7 +394,7 @@ static int _revert_action_handler(struct action *action, void *cb_arg)
 
 		if (FREE_PTRS_PUSH(path_quoted = shellquote(action->finalize_filehash.path)) == NULL)
 			goto Exit;
-		if (prepend_printf(&info->lines,
+		if (klist_insert_printf(&info->lines, klist_next(&info->lines, NULL),
 				"# check that file has not been altered since the recorded change\n"
 				"SHA1HEX=`openssl sha1 < %s`\n"
 				"[ $? -eq 0 ] || exit 1\n"
@@ -423,7 +411,7 @@ static int _revert_action_handler(struct action *action, void *cb_arg)
 
 		if (FREE_PTRS_PUSH(path_quoted = shellquote(action->finalize_fileremove.path)) == NULL)
 			goto Exit;
-		if (prepend_printf(&info->lines,
+		if (klist_insert_printf(&info->lines, klist_next(&info->lines, NULL),
 				"# check that file has not been recreated since the recorded removal\n"
 				"if [ -e %s ] ; then\n"
 				"    echo 'file recreated since recorded removal:%s' >&2\n"

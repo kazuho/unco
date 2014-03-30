@@ -22,6 +22,8 @@
  * THE SOFTWARE.
  */
 #include <assert.h>
+#include <stdarg.h>
+#include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
 #include "kazutils.h"
@@ -98,6 +100,35 @@ void *klist_insert(klist *l, const void *before_bytes, const void *data, size_t 
 		l->_head = item;
 	}
 	return item->bytes;
+}
+
+char *klist_insert_printf(klist *l, const void *before, const char *fmt, ...)
+{
+	char smallbuf[256], *ret;
+	va_list arg;
+	int len;
+
+	// determine the length (as well as fill-in the small buf)
+	va_start(arg, fmt);
+	len = vsnprintf(smallbuf, sizeof(smallbuf), fmt, arg);
+	va_end(arg);
+	if (len == -1)
+		return NULL;
+
+	// allocate
+	if ((ret = klist_insert(l, before, NULL, len + 1)) == NULL)
+		return NULL;
+
+	// copy from small buf or reprint
+	if (len < sizeof(smallbuf)) {
+		memcpy(ret, smallbuf, len + 1);
+	} else {
+		va_start(arg, fmt);
+		vsnprintf(ret, len + 1, fmt, arg);
+		va_end(arg);
+	}
+
+	return ret;
 }
 
 void klist_erase(klist *l, const void *cur)

@@ -21,47 +21,37 @@
  * OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN
  * THE SOFTWARE.
  */
-#ifndef kazutils_h
-#define kazutils_h
+#include <stdarg.h>
+#include <stdio.h>
+#include <stdlib.h>
+#include <string.h>
+#include "kazutils.h"
 
-#ifdef __cplusplus
-extern "C" {
-#endif
+char *ksprintf(const char *fmt, ...)
+{
+	char smallbuf[256], *ret;
+	va_list arg;
+	int len;
 
-typedef struct klist {
-	struct _klist_item *_head;
-	size_t count;
-	void (*destroy_item)(void *item);
-} klist;
+	// determine the length (as well as fill-in the small buf)
+	va_start(arg, fmt);
+	len = vsnprintf(smallbuf, sizeof(smallbuf), fmt, arg);
+	va_end(arg);
+	if (len == -1)
+		return NULL;
 
-void klist_clear(klist *l);
-void *klist_next(klist *l, const void *cur);
-void *klist_prev(klist *l, const void *cur);
-void *klist_insert(klist *l, const void *before, const void *data, size_t sz);
-char *klist_insert_printf(klist *l, const void *before, const char *fmt, ...);
-void klist_erase(klist *l, const void *cur);
+	// allocate
+	if ((ret = malloc(len + 1)) == NULL)
+		return NULL;
 
-char *ksprintf(const char *fmt, ...);
+	// copy from small buf or reprint
+	if (len < sizeof(smallbuf)) {
+		memcpy(ret, smallbuf, len + 1);
+	} else {
+		va_start(arg, fmt);
+		vsnprintf(ret, len + 1, fmt, arg);
+		va_end(arg);
+	}
 
-ssize_t kread_nosig(int fd, void *data, size_t len);
-int kwrite_full(int fd, const void *data, size_t len);
-int kcopyfd(int srcfd, int dstfd);
-
-#define KFREE_PTRS_INIT(n) \
-	void *_kfree_ptrs[n]; \
-	int _kfree_ptr_index = 0
-#define KFREE_PTRS() \
-	do { \
-		if (_kfree_ptr_index != 0) \
-			do \
-				free(_kfree_ptrs[--_kfree_ptr_index]); \
-			while (_kfree_ptr_index != 0); \
-	} while (0)
-#define KFREE_PTRS_PUSH(p) (_kfree_ptrs[_kfree_ptr_index++] = (p))
-
-
-#ifdef __cplusplus
+	return ret;
 }
-#endif
-
-#endif

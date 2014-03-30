@@ -45,6 +45,19 @@ ssize_t kread_nosig(int fd, void *data, size_t len);
 int kwrite_full(int fd, const void *data, size_t len);
 int kcopyfd(int srcfd, int dstfd);
 
+#define KFREE_PTRS_INIT(n) \
+	void *_kfree_ptrs[n]; \
+	int _kfree_ptr_index = 0
+#define KFREE_PTRS() \
+	do { \
+		if (_kfree_ptr_index != 0) \
+			do \
+				free(_kfree_ptrs[--_kfree_ptr_index]); \
+			while (_kfree_ptr_index != 0); \
+	} while (0)
+#define KFREE_PTRS_PUSH(p) (_kfree_ptrs[_kfree_ptr_index++] = (p))
+
+
 #ifdef __cplusplus
 }
 #endif

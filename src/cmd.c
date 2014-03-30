@@ -51,18 +51,6 @@
 # define EX_OSERR 71
 #endif
 
-#define FREE_PTRS_INIT(n) \
-	void *free_ptrs[n]; \
-	int free_ptr_index = 0
-#define FREE_PTRS() \
-	do { \
-		if (free_ptr_index != 0) \
-			do \
-				free(free_ptrs[--free_ptr_index]); \
-			while (free_ptr_index != 0); \
-	} while (0)
-#define FREE_PTRS_PUSH(p) (free_ptrs[free_ptr_index++] = (p))
-
 struct action {
 	char name[256];
 	int argc;
@@ -165,7 +153,7 @@ static int consume_log(const char *logpath, int (*cb)(struct action *action, voi
 	do { \
 		if ((dst = (char *)uncolog_read_argbuf(ufp, NULL)) == NULL) \
 			goto Exit; \
-		FREE_PTRS_PUSH(dst); \
+		KFREE_PTRS_PUSH(dst); \
 	} while (0)
 #define READ_ARGN(dst) \
 	do { \
@@ -179,7 +167,7 @@ static int consume_log(const char *logpath, int (*cb)(struct action *action, voi
 	struct action action;
 	int found_meta = 0, ret = -1;
 
-	FREE_PTRS_INIT(16);
+	KFREE_PTRS_INIT(16);
 
 	if (uncolog_open(ufp, logpath, 'r', open, mkdir) != 0)
 		return -1;
@@ -227,7 +215,7 @@ static int consume_log(const char *logpath, int (*cb)(struct action *action, voi
 		}
 		if (cb(&action, cb_arg) != 0)
 			goto Exit;
-		FREE_PTRS();
+		KFREE_PTRS();
 	}
 	if (! found_meta) {
 		fprintf(stderr, "mandatory action:meta is missing\n");
@@ -237,7 +225,7 @@ static int consume_log(const char *logpath, int (*cb)(struct action *action, voi
 
 	ret = 0;
 Exit:
-	FREE_PTRS();
+	KFREE_PTRS();
 	uncolog_close(ufp);
 	return ret;
 
@@ -308,7 +296,7 @@ static int _revert_action_handler(struct action *action, void *cb_arg)
 {
 	struct revert_info *info = cb_arg;
 	int ret = -1;
-	FREE_PTRS_INIT(16);
+	KFREE_PTRS_INIT(16);
 
 	if (strcmp(action->name, "meta") == 0) {
 
@@ -328,7 +316,7 @@ static int _revert_action_handler(struct action *action, void *cb_arg)
 
 		char *path_quoted;
 
-		if (FREE_PTRS_PUSH((path_quoted = shellquote(action->create.path))) == NULL)
+		if (KFREE_PTRS_PUSH((path_quoted = shellquote(action->create.path))) == NULL)
 			goto Exit;
 		if (klist_insert_printf(&info->lines, klist_next(&info->lines, NULL),
 				"# revert create\n"
@@ -340,8 +328,8 @@ static int _revert_action_handler(struct action *action, void *cb_arg)
 
 		char *path_quoted, *backup_quoted;
 
-		if (FREE_PTRS_PUSH(path_quoted = shellquote(action->overwrite.path)) == NULL
-			|| FREE_PTRS_PUSH(backup_quoted = shellquote(action->overwrite.backup)) == NULL)
+		if (KFREE_PTRS_PUSH(path_quoted = shellquote(action->overwrite.path)) == NULL
+			|| KFREE_PTRS_PUSH(backup_quoted = shellquote(action->overwrite.backup)) == NULL)
 			goto Exit;
 		if (klist_insert_printf(&info->lines, klist_next(&info->lines, NULL),
 				"# revert overwrite\n"
@@ -355,8 +343,8 @@ static int _revert_action_handler(struct action *action, void *cb_arg)
 
 		char *old_quoted, *new_quoted, *backup_quoted;
 
-		if (FREE_PTRS_PUSH(old_quoted = shellquote(action->rename.old)) == NULL
-			|| FREE_PTRS_PUSH(new_quoted = shellquote(action->rename.new)) == NULL)
+		if (KFREE_PTRS_PUSH(old_quoted = shellquote(action->rename.old)) == NULL
+			|| KFREE_PTRS_PUSH(new_quoted = shellquote(action->rename.new)) == NULL)
 			goto Exit;
 		if (action->rename.backup == NULL) {
 			if (klist_insert_printf(&info->lines, klist_next(&info->lines, NULL),
@@ -365,7 +353,7 @@ static int _revert_action_handler(struct action *action, void *cb_arg)
 					new_quoted, old_quoted) == NULL)
 				goto Exit;
 		} else {
-			if (FREE_PTRS_PUSH(backup_quoted = shellquote(action->rename.backup)) == NULL)
+			if (KFREE_PTRS_PUSH(backup_quoted = shellquote(action->rename.backup)) == NULL)
 				goto Exit;
 			if (klist_insert_printf(&info->lines, klist_next(&info->lines, NULL),
 					"# revert rename (replacing)\n"
@@ -379,8 +367,8 @@ static int _revert_action_handler(struct action *action, void *cb_arg)
 
 		char *path_quoted, *backup_quoted;
 
-		if (FREE_PTRS_PUSH(path_quoted = shellquote(action->overwrite.path)) == NULL
-			|| FREE_PTRS_PUSH(backup_quoted = shellquote(action->overwrite.backup)) == NULL)
+		if (KFREE_PTRS_PUSH(path_quoted = shellquote(action->overwrite.path)) == NULL
+			|| KFREE_PTRS_PUSH(backup_quoted = shellquote(action->overwrite.backup)) == NULL)
 			goto Exit;
 		if (klist_insert_printf(&info->lines, klist_next(&info->lines, NULL),
 				"# revert unlink\n"
@@ -392,7 +380,7 @@ static int _revert_action_handler(struct action *action, void *cb_arg)
 
 		char *path_quoted;
 
-		if (FREE_PTRS_PUSH(path_quoted = shellquote(action->finalize_filehash.path)) == NULL)
+		if (KFREE_PTRS_PUSH(path_quoted = shellquote(action->finalize_filehash.path)) == NULL)
 			goto Exit;
 		if (klist_insert_printf(&info->lines, klist_next(&info->lines, NULL),
 				"# check that file has not been altered since the recorded change\n"
@@ -409,7 +397,7 @@ static int _revert_action_handler(struct action *action, void *cb_arg)
 
 		char *path_quoted;
 
-		if (FREE_PTRS_PUSH(path_quoted = shellquote(action->finalize_fileremove.path)) == NULL)
+		if (KFREE_PTRS_PUSH(path_quoted = shellquote(action->finalize_fileremove.path)) == NULL)
 			goto Exit;
 		if (klist_insert_printf(&info->lines, klist_next(&info->lines, NULL),
 				"# check that file has not been recreated since the recorded removal\n"
@@ -434,7 +422,7 @@ static int _revert_action_handler(struct action *action, void *cb_arg)
 	// success
 	ret = 0;
 Exit:
-	FREE_PTRS();
+	KFREE_PTRS();
 	return ret;
 }
 

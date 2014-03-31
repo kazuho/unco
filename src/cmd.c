@@ -147,7 +147,7 @@ static int consume_log(const char *logpath, int (*cb)(struct action *action, voi
 	struct uncolog_fp _ufp, *ufp = &_ufp;
 	struct action action;
 	char name[256];
-	int found_meta = 0, ret = -1;
+	int ret = -1;
 
 	KFREE_PTRS_INIT(16);
 
@@ -165,7 +165,6 @@ static int consume_log(const char *logpath, int (*cb)(struct action *action, voi
 			READ_ARGSTR(action.meta.cwd);
 			READ_ARGN(action.meta.pid);
 			READ_ARGN(action.meta.ppid);
-			found_meta = 1;
 		} else if (strcmp(name, "create") == 0) {
 			assert(action.argc == 1);
 			action.type = ACTION_CREATE;
@@ -207,10 +206,6 @@ static int consume_log(const char *logpath, int (*cb)(struct action *action, voi
 			goto Exit;
 		KFREE_PTRS();
 	}
-	if (! found_meta) {
-		fprintf(stderr, "mandatory action:meta is missing\n");
-		goto Exit;
-	}
 	// TODO check eof
 
 	ret = 0;
@@ -221,6 +216,134 @@ Exit:
 
 #undef READ_ARGSTR
 #undef READ_ARGN
+}
+
+struct _finalize_info {
+	klist existing_files;
+	klist removed_files;
+	int is_finalized;
+};
+
+static int _finalize_mark_file_in_list(klist *l, const char *fn, int exists)
+{
+	char *item;
+
+	for (item = NULL; (item = klist_next(l, item)) != NULL; )
+		if (strcmp(item, fn) == 0)
+			break;
+
+	if ((item != NULL) != exists) {
+		if (exists) {
+			if (klist_insert(l, NULL, fn, strlen(fn) + 1) == NULL)
+				return -1;
+		} else {
+			klist_erase(l, item);
+		}
+	}
+
+	return 0;
+}
+
+static int _finalize_mark_file(struct _finalize_info *info, const char* fn, int exists)
+{
+	if (_finalize_mark_file_in_list(&info->existing_files, fn, exists) != 0
+		|| _finalize_mark_file_in_list(&info->removed_files, fn, ! exists) != 0)
+		return -1;
+	return 0;
+}
+
+static int _finalize_action_handler(struct action *action, void *cb_arg)
+{
+	struct _finalize_info *info = cb_arg;
+
+	switch (action->type) {
+	case ACTION_META:
+		break; // skip
+	case ACTION_CREATE:
+		if (_finalize_mark_file(info, action->create.path, 1) != 0)
+			return -1;
+		break;
+	case ACTION_OVERWRITE:
+		if (_finalize_mark_file(info, action->overwrite.path, 1) != 0)
+			return -1;
+		break;
+	case ACTION_RENAME:
+		if (_finalize_mark_file(info, action->rename.old, 0) != 0
+			|| _finalize_mark_file(info, action->rename.new, 1) != 0)
+			return -1;
+		break;
+	case ACTION_UNLINK:
+		if (_finalize_mark_file(info, action->unlink.path, 0) != 0)
+			return -1;
+		break;
+	case ACTION_FINALIZE_FILEHASH:
+	case ACTION_FINALIZE_FILEREMOVE:
+	case ACTION_FINALIZE:
+		fprintf(stderr, "log is already finalized\n");
+		return -1;
+	default:
+		assert(0);
+		return -1;
+	}
+
+	return 0;
+}
+
+static int _finalize_append_action(struct uncolog_fp* ufp, struct _finalize_info* info)
+{
+	const char *fn;
+	char sha1hex[SHA1HashSize * 2 + 1];
+	struct stat st;
+
+	// append existing files
+	for (fn = NULL; (fn = klist_next(&info->existing_files, fn)) != NULL; ) {
+		if (sha1hex_file(fn, sha1hex) != 0) {
+			uncolog_set_error(ufp, errno, "failed to sha1 file:%s", fn);
+			return -1;
+		}
+		if (uncolog_write_action(ufp, "finalize_filehash", 2) != 0
+			|| uncolog_write_argbuf(ufp, fn, strlen(fn)) != 0
+			|| uncolog_write_argbuf(ufp, sha1hex, strlen(sha1hex)) != 0)
+			return -1;
+	}
+	// append removed files
+	for (fn = NULL; (fn = klist_next(&info->removed_files, fn)) != NULL; ) {
+		if (lstat(fn, &st) == 0) {
+			uncolog_set_error(ufp, 0, "unexpected condition, file logged as being removed exists:%s", fn);
+			return -1;
+		}
+		if (uncolog_write_action(ufp, "finalize_fileremove", 1) != 0
+			|| uncolog_write_argbuf(ufp, fn, strlen(fn)) != 0)
+			return -1;
+	}
+
+	// append action
+	if (uncolog_write_action(ufp, "finalize", 0) != 0)
+		return -1;
+
+	return 0;
+}
+
+static int finalize(const char *logfn)
+{
+	struct _finalize_info info;
+	struct uncolog_fp ufp;
+
+	// determine the files that should be finalized
+	memset(&info, 0, sizeof(info));
+	if (consume_log(logfn, _finalize_action_handler, &info) != 0)
+		return EX_DATAERR;
+
+	// open log and finalize
+	if (uncolog_open(&ufp, logfn, 'a', open, mkdir) != 0)
+		return EX_SOFTWARE;
+	if (_finalize_append_action(&ufp, &info) != 0) {
+		uncolog_close(&ufp);
+		return EX_OSERR;
+	}
+	uncolog_close(&ufp);
+
+	return 0;
 }
 
 static int do_record(int argc, char **argv)
@@ -436,16 +559,18 @@ Exit:
 	return ret;
 }
 
-static int do_revert(int argc, char **argv)
+static int do_revert(int argc, char **argv, int is_redo)
 {
 	static struct option longopts[] = {
-		{ "--print", no_argument, NULL, 'p' },
+		{ "print", no_argument, NULL, 'p' },
 		{ NULL }
 	};
-	char *logfn = NULL, *unco_dir = NULL, *lines;
+	char *logfn, *unco_dir, *unco_cmd_quoted, *undo_logfn, *undo_logfn_quoted, *shellcmd, *lines;
 	int opt_ch, logindex, print = 0, exit = EX_SOFTWARE;
 	struct revert_info info;
+	struct stat st;
 	FILE *outfp;
+	KFREE_PTRS_INIT(16);
 
 	memset(&info, 0, sizeof(info));
 
@@ -456,7 +581,6 @@ static int do_revert(int argc, char **argv)
 			print = 1;
 			break;
 		default:
-			fprintf(stderr, "unknown option: %c\n", opt_ch);
 			exit = EX_USAGE;
 			goto Exit;
 		}
@@ -471,19 +595,34 @@ static int do_revert(int argc, char **argv)
 		goto Exit;
 	}
 	if (sscanf(*argv, "%d", &logindex) == 1) {
-		if ((unco_dir = unco_get_default_dir()) == NULL)
+		if (KFREE_PTRS_PUSH(unco_dir = unco_get_default_dir()) == NULL)
 			goto Exit;
-		if ((logfn = ksprintf("%s/%s", unco_dir, *argv)) == NULL) {
+		if (KFREE_PTRS_PUSH(logfn = ksprintf("%s/%s", unco_dir, *argv)) == NULL) {
 			perror("unco");
 			goto Exit;
 		}
 	} else {
-		if ((logfn = strdup(*argv)) == NULL) {
-			perror("unco");
-			goto Exit;
-		}
+		logfn = *argv;
 	}
 	argv++, --argc;
+
+	// check undo status
+	if (KFREE_PTRS_PUSH(undo_logfn = ksprintf("%s/undo", logfn)) == NULL) {
+		perror("unco");
+		goto Exit;
+	}
+	if (is_redo != (stat(undo_logfn, &st) == 0)) {
+		if (is_redo) {
+			fprintf(stderr, "aborting; the recorded changes has not been undone\n");
+		} else {
+			fprintf(stderr, "aborting; the recorded changes has already been undone\n");
+		}
+		return EX_DATAERR;
+	}
+
+	// swap logfn to undo_logfn if is a redo
+	if (is_redo)
+		logfn = undo_logfn;
 
 	// read the log
 	if (consume_log(logfn, _revert_action_handler, &info) != 0) {
@@ -496,7 +635,23 @@ static int do_revert(int argc, char **argv)
 
 	// setup output
 	if (! print) {
-		if ((outfp = popen("sh", "w")) == NULL) {
+		if (KFREE_PTRS_PUSH(unco_cmd_quoted = kshellquote(WITH_BINDIR "/unco")) == NULL) {
+			perror("unco");
+			exit = EX_OSERR;
+			goto Exit;
+		}
+		if (is_redo) {
+			shellcmd = "sh";
+		} else {
+			// record the undo log
+			if (KFREE_PTRS_PUSH(undo_logfn_quoted = kshellquote(undo_logfn)) == NULL
+				|| KFREE_PTRS_PUSH(shellcmd = ksprintf("UNCO_UNDO=1 %s record --log=%s -- sh", unco_cmd_quoted, undo_logfn_quoted)) == NULL) {
+				perror("unco");
+				exit = EX_OSERR;
+				goto Exit;
+			}
+		}
+		if ((outfp = popen(shellcmd, "w")) == NULL) {
 			perror("failed to invoke sh");
 			exit = EX_OSERR;
 			goto Exit;
@@ -512,15 +667,28 @@ static int do_revert(int argc, char **argv)
 	}
 	// close the pipe
 	if (! print) {
-		if (pclose(outfp) != 0)
+		// close the command
+		if (pclose(outfp) != 0) {
 			exit = EX_OSERR; // error is reported by shell
+			goto Exit;
+		}
+		if (is_redo) {
+			// remove undo log
+			if (uncolog_delete(undo_logfn, 0) != 0) {
+				exit = EX_DATAERR;
+				goto Exit;
+			}
+		} else {
+			// finalize the undo
+			if ((exit = finalize(undo_logfn)) != 0)
+				goto Exit;
+		}
 	}
 
 	// success
 	exit = 0;
 Exit:
-	free(logfn);
-	free(unco_dir);
+	KFREE_PTRS();
 	free(info.header);
 	klist_clear(&info.lines);
 	return exit;
@@ -537,7 +705,9 @@ struct history_info {
 static int _history_action_handler(struct action *action, void *cb_arg)
 {
 	struct history_info *info = cb_arg;
-	int matched;
+	int matched, undone;
+	char *undo_logfn;
+	struct stat st;
 
 	switch (action->type) {
 	case ACTION_META:
@@ -548,8 +718,16 @@ static int _history_action_handler(struct action *action, void *cb_arg)
 			matched = 0;
 		if (matched && info->grep_cwd != NULL && strcmp(action->meta.cwd, info->grep_cwd) != 0)
 			matched = 0;
-		if (matched)
-			printf("%4d %s\n", info->logindex, action->meta.cmd);
+		if (matched) {
+			if ((undo_logfn = ksprintf("%s/undo", info->logfn)) == NULL) {
+				perror("unco");
+				return -1;
+			}
+			undone = stat(undo_logfn, &st) == 0;
+			free(undo_logfn);
+			printf("%6d %c %s", info->logindex, undone ? '*' : ' ', action->meta.cmd);
+			printf("\n");
+		}
 		return -1; // bail-out
 	}
 
@@ -571,6 +749,7 @@ static int do_history(int argc, char **argv)
 
 	// TODO getopt
 
+	printf("index    command (*=undone)\n");
 	for (logindex = 1; ; ++logindex) {
 		if ((logfn = ksprintf("%s/%d", unco_dir, logindex)) == NULL)
 			break;
@@ -586,119 +765,11 @@ static int do_history(int argc, char **argv)
 	return 0;
 }
 
-struct finalize_info {
-	klist existing_files;
-	klist removed_files;
-	int is_finalized;
-};
-
-static int _finalize_mark_file_in_list(klist *l, const char *fn, int exists)
-{
-	char *item;
-
-	for (item = NULL; (item = klist_next(l, item)) != NULL; )
-		if (strcmp(item, fn) == 0)
-			break;
-
-	if ((item != NULL) != exists) {
-		if (exists) {
-			if (klist_insert(l, NULL, fn, strlen(fn) + 1) == NULL)
-				return -1;
-		} else {
-			klist_erase(l, item);
-		}
-	}
-
-	return 0;
-}
-
-static int _finalize_mark_file(struct finalize_info *info, const char* fn, int exists)
-{
-	if (_finalize_mark_file_in_list(&info->existing_files, fn, exists) != 0
-		|| _finalize_mark_file_in_list(&info->removed_files, fn, ! exists) != 0)
-		return -1;
-	return 0;
-}
-
-static int _finalize_action_handler(struct action *action, void *cb_arg)
-{
-	struct finalize_info *info = cb_arg;
-
-	switch (action->type) {
-	case ACTION_META:
-		break; // skip
-	case ACTION_CREATE:
-		if (_finalize_mark_file(info, action->create.path, 1) != 0)
-			return -1;
-		break;
-	case ACTION_OVERWRITE:
-		if (_finalize_mark_file(info, action->overwrite.path, 1) != 0)
-			return -1;
-		break;
-	case ACTION_RENAME:
-		if (_finalize_mark_file(info, action->rename.old, 0) != 0
-			|| _finalize_mark_file(info, action->rename.new, 1) != 0)
-			return -1;
-		break;
-	case ACTION_UNLINK:
-		if (_finalize_mark_file(info, action->unlink.path, 0) != 0)
-			return -1;
-		break;
-	case ACTION_FINALIZE_FILEHASH:
-	case ACTION_FINALIZE_FILEREMOVE:
-	case ACTION_FINALIZE:
-		fprintf(stderr, "log is already finalized\n");
-		return -1;
-	default:
-		assert(0);
-		return -1;
-	}
-
-	return 0;
-}
-
-static int _finalize_append_action(struct uncolog_fp* ufp, struct finalize_info* info)
-{
-	const char *fn;
-	char sha1hex[SHA1HashSize * 2 + 1];
-	struct stat st;
-
-	// append existing files
-	for (fn = NULL; (fn = klist_next(&info->existing_files, fn)) != NULL; ) {
-		if (sha1hex_file(fn, sha1hex) != 0) {
-			uncolog_set_error(ufp, errno, "failed to sha1 file:%s", fn);
-			return -1;
-		}
-		if (uncolog_write_action(ufp, "finalize_filehash", 2) != 0
-			|| uncolog_write_argbuf(ufp, fn, strlen(fn)) != 0
-			|| uncolog_write_argbuf(ufp, sha1hex, strlen(sha1hex)) != 0)
-			return -1;
-	}
-	// append removed files
-	for (fn = NULL; (fn = klist_next(&info->removed_files, fn)) != NULL; ) {
-		if (lstat(fn, &st) == 0) {
-			uncolog_set_error(ufp, 0, "unexpected condition, file logged as being removed exists:%s", fn);
-			return -1;
-		}
-		if (uncolog_write_action(ufp, "finalize_fileremove", 1) != 0
-			|| uncolog_write_argbuf(ufp, fn, strlen(fn)) != 0)
-			return -1;
-	}
-
-	// append action
-	if (uncolog_write_action(ufp, "finalize", 0) != 0)
-		return -1;
-
-	return 0;
-}
-
 static int do_finalize()
 {
 	const char *logfn;
 	char rdbuf;
 	int rdret;
-	struct finalize_info info;
-	struct uncolog_fp ufp;
 
 	// prepare and wait
 	if ((logfn = getenv("UNCO_LOG")) == NULL) {
@@ -713,22 +784,7 @@ static int do_finalize()
 	}
 
 	// ready to finalize NOW!
-
-	// determine the files that should be finalized
-	memset(&info, 0, sizeof(info));
-	if (consume_log(logfn, _finalize_action_handler, &info) != 0)
-		return EX_DATAERR;
-
-	// open log and finalize
-	if (uncolog_open(&ufp, logfn, 'a', open, mkdir) != 0)
-		return EX_SOFTWARE;
-	if (_finalize_append_action(&ufp, &info) != 0) {
-		uncolog_close(&ufp);
-		return EX_OSERR;
-	}
-	uncolog_close(&ufp);
-
-	return 0;
+	return finalize(logfn);
 }
 
 static int help(int retval)
@@ -739,13 +795,13 @@ static int help(int retval)
 		"SYNOPSIS:\n"
 		"\n"
 		"    # records changes to fs made by command\n"
-		"    unco record [--log=<log-path>] command...\n"
+		"    unco record command...\n"
 		"\n"
-		"    # displays shell-script to undo the changes\n"
-		"    unco revert --log=<log-path>\n"
+		"    # displays list of the recorded commands\n"
+		"    unco history\n"
 		"\n"
-		"    # actually undoes the recorded changes\n"
-		"    unco revert --log=<log-path> --run\n"
+		"    # undoes the changes specified by the index\n"
+		"    unco undo <index>\n"
 		"\n");
 
 	return retval;
@@ -763,8 +819,10 @@ int main(int argc, char **argv)
 	cmd = *argv++, argc--;
 	if (strcmp(cmd, "record") == 0)
 		return do_record(argc, argv);
-	else if (strcmp(cmd, "revert") == 0)
-		return do_revert(argc, argv);
+	else if (strcmp(cmd, "undo") == 0)
+		return do_revert(argc, argv, 0);
+	else if (strcmp(cmd, "redo") == 0)
+		return do_revert(argc, argv, 1);
 	else if (strcmp(cmd, "history") == 0)
 		return do_history(argc, argv);
 	else if (strcmp(cmd, "_finalize") == 0)

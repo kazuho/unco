@@ -382,7 +382,12 @@ int uncolog_delete(const char *path, int force)
 				goto Exit;
 			}
 			free(fnbuf);
+			fnbuf = NULL;
 		}
+	}
+	if (rmdir(path) != 0) {
+		kerr_printf("unco:failed to rmdir:%s", path);
+		goto Exit;
 	}
 
 	ret = 0;

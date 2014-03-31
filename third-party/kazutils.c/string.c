@@ -86,3 +86,18 @@ char *kshellquote(const char *raw)
 
 	return quoted;
 }
+
+char *kdirname(const char *path)
+{
+	char *lastslash, *ret;
+	size_t len;
+
+	if ((lastslash = strrchr(path, '/')) == NULL)
+		return strdup(".");
+	len = lastslash - path - 1;
+	if ((ret = malloc(len + 1)) == NULL)
+		return NULL;
+	memcpy(ret, path, len);
+	ret[len] = '\0';
+	return ret;
+}

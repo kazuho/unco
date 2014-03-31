@@ -43,6 +43,7 @@ void klist_erase(klist *l, const void *cur);
 
 char *ksprintf(const char *fmt, ...);
 char *kshellquote(const char *raw);
+char *kdirname(const char *path);
 
 ssize_t kread_nosig(int fd, void *data, size_t len);
 int kwrite_full(int fd, const void *data, size_t len);

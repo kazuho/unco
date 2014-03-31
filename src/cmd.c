@@ -22,7 +22,6 @@
  * THE SOFTWARE.
  */
 #include <assert.h>
-#include <ctype.h>
 #include <errno.h>
 #include <fcntl.h>
 #include <getopt.h>
@@ -98,36 +97,6 @@ struct action {
 		} finalize_fileremove;
 	};
 };
-
-static char *shellquote(const char *raw)
-{
-	char *quoted;
-	int raw_idx, quoted_idx;
-
-	// empty string => ''
-	if (raw[0] == '\0')
-		return strdup("''");
-
-	if ((quoted = (char *)malloc(strlen(raw) * 2 + 1)) == NULL) {
-		perror("");
-		return NULL;
-	}
-	quoted_idx = 0;
-	for (raw_idx = 0; raw[raw_idx] != '\0'; ++raw_idx) {
-		if (isalnum(raw[raw_idx])) {
-			// ok
-		} else if (strchr("!%+,-./:@^", raw[raw_idx]) != NULL) {
-			// ok
-		} else {
-			// needs backslash
-			quoted[quoted_idx++] = '\\';
-		}
-		quoted[quoted_idx++] = raw[raw_idx];
-	}
-	quoted[quoted_idx++] = '\0';
-
-	return quoted;
-}
 
 static int sha1hex_file(const char *fn, char *sha1hex)
 {
@@ -339,7 +308,7 @@ static int _revert_action_handler(struct action *action, void *cb_arg)
 		{
 			char *path_quoted;
 
-			if (KFREE_PTRS_PUSH((path_quoted = shellquote(action->create.path))) == NULL)
+			if (KFREE_PTRS_PUSH((path_quoted = kshellquote(action->create.path))) == NULL)
 				goto Exit;
 			if (klist_insert_printf(&info->lines, klist_next(&info->lines, NULL),
 					"# revert create\n"
@@ -353,8 +322,8 @@ static int _revert_action_handler(struct action *action, void *cb_arg)
 		{
 			char *path_quoted, *backup_quoted;
 
-			if (KFREE_PTRS_PUSH(path_quoted = shellquote(action->overwrite.path)) == NULL
-				|| KFREE_PTRS_PUSH(backup_quoted = shellquote(action->overwrite.backup)) == NULL)
+			if (KFREE_PTRS_PUSH(path_quoted = kshellquote(action->overwrite.path)) == NULL
+				|| KFREE_PTRS_PUSH(backup_quoted = kshellquote(action->overwrite.backup)) == NULL)
 				goto Exit;
 			if (klist_insert_printf(&info->lines, klist_next(&info->lines, NULL),
 					"# revert overwrite\n"
@@ -370,8 +339,8 @@ static int _revert_action_handler(struct action *action, void *cb_arg)
 		{
 			char *old_quoted, *new_quoted, *backup_quoted;
 
-			if (KFREE_PTRS_PUSH(old_quoted = shellquote(action->rename.old)) == NULL
-				|| KFREE_PTRS_PUSH(new_quoted = shellquote(action->rename.new)) == NULL)
+			if (KFREE_PTRS_PUSH(old_quoted = kshellquote(action->rename.old)) == NULL
+				|| KFREE_PTRS_PUSH(new_quoted = kshellquote(action->rename.new)) == NULL)
 				goto Exit;
 			if (action->rename.backup == NULL) {
 				if (klist_insert_printf(&info->lines, klist_next(&info->lines, NULL),
@@ -380,7 +349,7 @@ static int _revert_action_handler(struct action *action, void *cb_arg)
 						new_quoted, old_quoted) == NULL)
 					goto Exit;
 			} else {
-				if (KFREE_PTRS_PUSH(backup_quoted = shellquote(action->rename.backup)) == NULL)
+				if (KFREE_PTRS_PUSH(backup_quoted = kshellquote(action->rename.backup)) == NULL)
 					goto Exit;
 				if (klist_insert_printf(&info->lines, klist_next(&info->lines, NULL),
 						"# revert rename (replacing)\n"
@@ -396,8 +365,8 @@ static int _revert_action_handler(struct action *action, void *cb_arg)
 		{
 			char *path_quoted, *backup_quoted;
 
-			if (KFREE_PTRS_PUSH(path_quoted = shellquote(action->overwrite.path)) == NULL
-				|| KFREE_PTRS_PUSH(backup_quoted = shellquote(action->overwrite.backup)) == NULL)
+			if (KFREE_PTRS_PUSH(path_quoted = kshellquote(action->overwrite.path)) == NULL
+				|| KFREE_PTRS_PUSH(backup_quoted = kshellquote(action->overwrite.backup)) == NULL)
 				goto Exit;
 			if (klist_insert_printf(&info->lines, klist_next(&info->lines, NULL),
 					"# revert unlink\n"
@@ -411,7 +380,7 @@ static int _revert_action_handler(struct action *action, void *cb_arg)
 		{
 			char *path_quoted;
 
-			if (KFREE_PTRS_PUSH(path_quoted = shellquote(action->finalize_filehash.path)) == NULL)
+			if (KFREE_PTRS_PUSH(path_quoted = kshellquote(action->finalize_filehash.path)) == NULL)
 				goto Exit;
 			if (klist_insert_printf(&info->lines, klist_next(&info->lines, NULL),
 					"# check that file has not been altered since the recorded change\n"
@@ -430,7 +399,7 @@ static int _revert_action_handler(struct action *action, void *cb_arg)
 		{
 			char *path_quoted;
 
-			if (KFREE_PTRS_PUSH(path_quoted = shellquote(action->finalize_fileremove.path)) == NULL)
+			if (KFREE_PTRS_PUSH(path_quoted = kshellquote(action->finalize_fileremove.path)) == NULL)
 				goto Exit;
 			if (klist_insert_printf(&info->lines, klist_next(&info->lines, NULL),
 					"# check that file has not been recreated since the recorded removal\n"

@@ -42,6 +42,7 @@ char *klist_insert_printf(klist *l, const void *before, const char *fmt, ...);
 void klist_erase(klist *l, const void *cur);
 
 char *ksprintf(const char *fmt, ...);
+char *kshellquote(const char *raw);
 
 ssize_t kread_nosig(int fd, void *data, size_t len);
 int kwrite_full(int fd, const void *data, size_t len);

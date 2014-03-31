@@ -21,6 +21,7 @@
  * OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN
  * THE SOFTWARE.
  */
+#include <ctype.h>
 #include <stdarg.h>
 #include <stdio.h>
 #include <stdlib.h>
@@ -54,4 +55,34 @@ char *ksprintf(const char *fmt, ...)
 	}
 
 	return ret;
+}
+
+char *kshellquote(const char *raw)
+{
+	char *quoted;
+	int raw_idx, quoted_idx;
+
+	// empty string => ''
+	if (raw[0] == '\0')
+		return strdup("''");
+
+	if ((quoted = (char *)malloc(strlen(raw) * 2 + 1)) == NULL) {
+		perror("");
+		return NULL;
+	}
+	quoted_idx = 0;
+	for (raw_idx = 0; raw[raw_idx] != '\0'; ++raw_idx) {
+		if (isalnum(raw[raw_idx])) {
+			// ok
+		} else if (strchr("!%+,-./:@^", raw[raw_idx]) != NULL) {
+			// ok
+		} else {
+			// needs backslash
+			quoted[quoted_idx++] = '\\';
+		}
+		quoted[quoted_idx++] = raw[raw_idx];
+	}
+	quoted[quoted_idx++] = '\0';
+
+	return quoted;
 }

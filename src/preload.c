@@ -366,3 +366,14 @@ WRAP(unlink, int, (const char *path), {
 	free(backup);
 	return ret;
 })
+
+WRAP(link, int, (const char *path1, const char *path2), {
+	int ret = orig(path1, path2);
+	if (ret == 0) {
+		// log the action
+		uncolog_write_action(&ufp, "link", 2);
+		uncolog_write_argfn(&ufp, path1);
+		uncolog_write_argfn(&ufp, path2);
+	}
+	return ret;
+})

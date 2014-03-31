@@ -56,6 +56,7 @@ enum {
 	ACTION_OVERWRITE,
 	ACTION_RENAME,
 	ACTION_UNLINK,
+	ACTION_LINK,
 	ACTION_FINALIZE_FILEHASH,
 	ACTION_FINALIZE_FILEREMOVE,
 	ACTION_FINALIZE,
@@ -88,6 +89,10 @@ struct action {
 			char *path;
 			char *backup;
 		} unlink;
+		struct {
+			char *path1;
+			char *path2;
+		} link;
 		struct {
 			char *path;
 			char *sha1hex;
@@ -186,6 +191,11 @@ static int consume_log(const char *logpath, int (*cb)(struct action *action, voi
 			action.type = ACTION_UNLINK;
 			READ_ARGSTR(action.unlink.path);
 			READ_ARGSTR(action.unlink.backup);
+		} else if (strcmp(name, "link") == 0) {
+			assert(action.argc == 2);
+			action.type = ACTION_LINK;
+			READ_ARGSTR(action.link.path1);
+			READ_ARGSTR(action.link.path2);
 		} else if (strcmp(name, "finalize_filehash") == 0) {
 			assert(action.argc == 2);
 			action.type = ACTION_FINALIZE_FILEHASH;
@@ -274,6 +284,10 @@ static int _finalize_action_handler(struct action *action, void *cb_arg)
 		break;
 	case ACTION_UNLINK:
 		if (_finalize_mark_file(info, action->unlink.path, 0) != 0)
+			return -1;
+		break;
+	case ACTION_LINK:
+		if (_finalize_mark_file(info, action->link.path2, 1) != 0)
 			return -1;
 		break;
 	case ACTION_FINALIZE_FILEHASH:
@@ -501,6 +515,20 @@ static int _revert_action_handler(struct action *action, void *cb_arg)
 					"# revert unlink\n"
 					"ln %s %s || exit 1\n",
 					backup_quoted, path_quoted) == NULL)
+				goto Exit;
+		}
+		break;
+
+	case ACTION_LINK:
+		{
+			char *path2_quoted;
+
+			if (KFREE_PTRS_PUSH(path2_quoted = kshellquote(action->link.path2)) == NULL)
+				goto Exit;
+			if (klist_insert_printf(&info->lines, klist_next(&info->lines, NULL),
+				"# revert link\n"
+				"rm %s || exit 1\n",
+				path2_quoted) == NULL)
 				goto Exit;
 		}
 		break;

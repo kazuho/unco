@@ -43,16 +43,24 @@ int unco_utimes(int fd, const struct stat *st, int (*futimes)(int, const struct 
 
 char *unco_get_default_dir()
 {
-	char *env, *dir;
+	char *home, *dir;
 
-	// $HOME/.unco
-	if ((env = getenv("HOME")) == NULL) {
-		fprintf(stderr, "unco:$HOME is not set\n");
-		return NULL;
-	}
-	if ((dir = ksprintf("%s/.unco", env)) == NULL) {
-		perror("unco");
-		return NULL;
+	if ((dir = getenv("UNCO_HOME")) != NULL) {
+		// got it
+		if ((dir = strdup(dir)) == NULL) {
+			perror("unco");
+			return NULL;
+		}
+	} else {
+		// $HOME/.unco
+		if ((home = getenv("HOME")) == NULL) {
+			fprintf(stderr, "unco:$HOME is not set\n");
+			return NULL;
+		}
+		if ((dir = ksprintf("%s/.unco", home)) == NULL) {
+			perror("unco");
+			return NULL;
+		}
 	}
 
 	// mkdir

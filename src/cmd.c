@@ -572,7 +572,7 @@ static int _finalize_mark_file_in_list(klist *l, const char *fn, int exists)
 	char *item;
 
 	for (item = NULL; (item = klist_next(l, item)) != NULL; )
-		if (strcpy(item, fn) == 0)
+		if (strcmp(item, fn) == 0)
 			break;
 
 	if ((item != NULL) != exists) {

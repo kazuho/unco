@@ -246,7 +246,9 @@ extern RetType Fn Args { \
 	if (orig == NULL) { \
 		orig = (RetType (*) Args)dlsym(RTLD_NEXT, #Fn); \
 	} \
-	Body \
+	do { \
+		Body \
+	} while (0); \
 }
 
 WRAP(open, int, (const char *path, int oflag, ...), {

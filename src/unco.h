@@ -31,6 +31,8 @@
 extern "C" {
 #endif
 
+#define UNCO_LOG_PATH_MAX 256
+
 struct uncolog_fp {
 	int _fd;
 	int (*_default_open)(const char *, int, ...);

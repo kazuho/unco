@@ -110,6 +110,31 @@ static void log_meta(void)
 	uncolog_write_argn(&ufp, getppid());
 }
 
+static int set_uncolog_osx(const char *logfn)
+{
+	// we need to rewrite an existing entry of environ
+	char **env = *_NSGetEnviron();
+	size_t n;
+
+	if (strlen(logfn) >= UNCO_LOG_PATH_MAX) {
+		fprintf(stderr, "log file name is too long:%s\n", logfn);
+		return -1;
+	}
+
+	// find and replace
+	for (n = 0; env[n] != NULL; ++n) {
+		if (strncmp(env[n], "UNCO_LOG_PLACEHOLDER=", sizeof("UNCO_LOG_PLACEHOLDER=") - 1) == 0)
+			break;
+	}
+	if (env[n] == NULL) {
+		fprintf(stderr, "env var UNCO_LOG_PLACEHOLDER not set\n");
+		return -1;
+	}
+	snprintf(env[n], strlen(env[n]) + 1, "UNCO_LOG=%s", logfn);
+
+	return 0;
+}
+
 __attribute__((constructor))
 extern void _setup_unco_preload()
 {
@@ -150,7 +175,12 @@ extern void _setup_unco_preload()
 		}
 		logfn = fnbuf;
 		// set UNCO_LOG, so that child processes would write to the same file
+#if 1
+		if (set_uncolog_osx(logfn) != 0)
+			goto Error;
+#else
 		setenv("UNCO_LOG", logfn, 1);
+#endif
 		open_mode = 'w';
 	}
 

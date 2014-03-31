@@ -269,8 +269,14 @@ static int do_record(int argc, char **argv)
 	// set environment variables and exec
 	setenv("DYLD_INSERT_LIBRARIES", WITH_LIBDIR "/libunco-preload.dylib", 1);
 	setenv("DYLD_FORCE_FLAT_NAMESPACE", "YES", 1);
-	if (log_file != NULL)
+	if (log_file != NULL) {
 		setenv("UNCO_LOG", log_file, 1);
+	} else {
+		char placeholder[UNCO_LOG_PATH_MAX];
+		memset(placeholder, ' ', sizeof(placeholder) - 1);
+		placeholder[sizeof(placeholder) - 1] = '\0';
+		setenv("UNCO_LOG_PLACEHOLDER", placeholder, 1);
+	}
 	execvp(argv[0], argv);
 	kerr_printf("failed to exec:%s", argv[0]);
 	return 127; // FIXME what is the right code?

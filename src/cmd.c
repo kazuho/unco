@@ -429,25 +429,21 @@ Exit:
 static int do_revert(int argc, char **argv)
 {
 	static struct option longopts[] = {
-		{ "log", required_argument, NULL, 'l' },
-		{ "run", no_argument, NULL, 'r' },
+		{ "--print", no_argument, NULL, 'p' },
 		{ NULL }
 	};
-	const char *log_file, *lines;
-	int opt_ch, run = 0, exit = EX_SOFTWARE;
+	char *logfn = NULL, *unco_dir = NULL, *lines;
+	int opt_ch, logindex, print = 0, exit = EX_SOFTWARE;
 	struct revert_info info;
 	FILE *outfp;
 
 	memset(&info, 0, sizeof(info));
 
 	// fetch opts
-	while ((opt_ch = getopt_long(argc + 1, argv - 1, "l:r", longopts, NULL)) != -1) {
+	while ((opt_ch = getopt_long(argc + 1, argv - 1, "p", longopts, NULL)) != -1) {
 		switch (opt_ch) {
-		case 'l':
-			log_file = optarg;
-			break;
-		case 'r':
-			run = 1;
+		case 'p':
+			print = 1;
 			break;
 		default:
 			fprintf(stderr, "unknown option: %c\n", opt_ch);
@@ -455,16 +451,32 @@ static int do_revert(int argc, char **argv)
 			goto Exit;
 		}
 	}
-	if (log_file == NULL) {
-		fprintf(stderr, "missing mandatory option: --log\n");
-		exit = EX_USAGE;
-		goto Exit;
-	}
 	argc -= optind - 1;
 	argv += optind - 1;
 
+	// normalize logfn (if it looks like a number then it's the id)
+	if (argc == 0) {
+		fprintf(stderr, "no args, should specify log number or filename\n");
+		exit = EX_USAGE;
+		goto Exit;
+	}
+	if (sscanf(*argv, "%d", &logindex) == 1) {
+		if ((unco_dir = unco_get_default_dir()) == NULL)
+			goto Exit;
+		if ((logfn = ksprintf("%s/%s", unco_dir, *argv)) == NULL) {
+			perror("unco");
+			goto Exit;
+		}
+	} else {
+		if ((logfn = strdup(*argv)) == NULL) {
+			perror("unco");
+			goto Exit;
+		}
+	}
+	argv++, --argc;
+
 	// read the log
-	if (consume_log(log_file, _revert_action_handler, &info) != 0) {
+	if (consume_log(logfn, _revert_action_handler, &info) != 0) {
 		exit = EX_DATAERR;
 		goto Exit;
 	}
@@ -473,7 +485,7 @@ static int do_revert(int argc, char **argv)
 		fprintf(stderr, "\n    !!! WARNING !!! the command is still running\n\n");
 
 	// setup output
-	if (run) {
+	if (! print) {
 		if ((outfp = popen("sh", "w")) == NULL) {
 			perror("failed to invoke sh");
 			exit = EX_OSERR;
@@ -489,7 +501,7 @@ static int do_revert(int argc, char **argv)
 		fputs(lines, outfp);
 	}
 	// close the pipe
-	if (run) {
+	if (! print) {
 		if (pclose(outfp) != 0)
 			exit = EX_OSERR; // error is reported by shell
 	}
@@ -497,6 +509,8 @@ static int do_revert(int argc, char **argv)
 	// success
 	exit = 0;
 Exit:
+	free(logfn);
+	free(unco_dir);
 	free(info.header);
 	klist_clear(&info.lines);
 	return exit;

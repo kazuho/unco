@@ -59,7 +59,7 @@ char *unco_get_default_dir()
 	if (mkdir(dir, 0700) == 0 || errno == EEXIST) {
 		// ok
 	} else {
-		fprintf(stderr, "failed to create dir:%s:%d\n", dir, errno);
+		kerr_printf("failed to create dir:%s", dir);
 		free(dir);
 		return NULL;
 	}
@@ -82,7 +82,7 @@ static int _log_exists(const char *dir, long long log_index, int *exists)
 	} else if (errno == ENOENT) {
 		*exists = 0;
 	} else {
-		fprintf(stderr, "failed to stat file:%s:%d\n", path, errno);
+		kerr_printf("failed to stat file:%s", path);
 		goto Exit;
 	}
 

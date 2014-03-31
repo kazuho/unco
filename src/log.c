@@ -100,12 +100,20 @@ void uncolog_init_fp(struct uncolog_fp *ufp)
 	ufp->_path = NULL;
 }
 
-void uncolog_set_error(struct uncolog_fp *ufp, const char *fmt, ...)
+void uncolog_set_error(struct uncolog_fp *ufp, int errnum, const char *fmt, ...)
 {
 	va_list arg;
+	char errbuf[256];
+
 	va_start(arg, fmt);
 	if (ufp->_fd != -1) {
 		vfprintf(stderr, fmt, arg);
+		if (errnum != 0) {
+			strerror_r(errnum, errbuf, sizeof(errbuf));
+			fprintf(stderr, ":%s\n", errbuf);
+		} else {
+			fputs("\n", stderr);
+		}
 	}
 	va_end(arg);
 
@@ -140,7 +148,7 @@ int uncolog_open(struct uncolog_fp *ufp, const char *path, int mode, int (*defau
 		if (default_mkdir(path, 0700) == 0 || errno == EEXIST) {
 			// ok
 		} else {
-			fprintf(stderr, "unco:failed create dir:%s:%d\n", path, errno);
+			kerr_printf("unco:failed create dir:%s", path);
 			return -1;
 		}
 	}
@@ -151,7 +159,7 @@ int uncolog_open(struct uncolog_fp *ufp, const char *path, int mode, int (*defau
 		return -1;
 	}
 	if ((logfd = default_open(logfn, oflag, 0600)) == -1) {
-		fprintf(stderr, "unco:failed to open file:%s:%d\n", logfn, errno);
+		kerr_printf("unco:failed to open file:%s", logfn);
 		if ((oflag & O_WRONLY) != 0) {
 			free(logfn);
 			rmdir(path);
@@ -357,7 +365,7 @@ int uncolog_delete(const char *path, int force)
 		if (force)
 			ret = 0;
 		else
-			fprintf(stderr, "unco:could not find unco log at:%s:%d\n", path, errno);
+			kerr_printf("unco:could not find unco log at:%s", path);
 		goto Exit;
 	}
 	while ((ent = readdir(dp)) != NULL) {
@@ -370,7 +378,7 @@ int uncolog_delete(const char *path, int force)
 				goto Exit;
 			}
 			if (unlink(fnbuf) != 0) {
-				fprintf(stderr, "unco:failed to unlink file:%s:%d\n", fnbuf, errno);
+				kerr_printf("unco:failed to unlink file:%s", fnbuf);
 				goto Exit;
 			}
 			free(fnbuf);

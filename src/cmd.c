@@ -282,7 +282,7 @@ static int do_record(int argc, char **argv)
 	if (log_file != NULL)
 		setenv("UNCO_LOG", log_file, 1);
 	execvp(argv[0], argv);
-	fprintf(stderr, "failed to exec:%s:%d\n", argv[0], errno);
+	kerr_printf("failed to exec:%s", argv[0]);
 	return 127; // FIXME what is the right code?
 }
 
@@ -576,7 +576,7 @@ static int _finalize_append_action(struct uncolog_fp* ufp, struct finalize_info*
 	// append existing files
 	for (fn = NULL; (fn = klist_next(&info->existing_files, fn)) != NULL; ) {
 		if (sha1hex_file(fn, sha1hex) != 0) {
-			uncolog_set_error(ufp, "failed to sha1 file:%s:%d\n", fn, errno);
+			uncolog_set_error(ufp, errno, "failed to sha1 file:%s", fn);
 			return -1;
 		}
 		if (uncolog_write_action(ufp, "finalize_filehash", 2) != 0
@@ -587,7 +587,7 @@ static int _finalize_append_action(struct uncolog_fp* ufp, struct finalize_info*
 	// append removed files
 	for (fn = NULL; (fn = klist_next(&info->removed_files, fn)) != NULL; ) {
 		if (lstat(fn, &st) == 0) {
-			uncolog_set_error(ufp, "unexpected condition, file logged as being removed exists:%s\n", fn);
+			uncolog_set_error(ufp, 0, "unexpected condition, file logged as being removed exists:%s", fn);
 			return -1;
 		}
 		if (uncolog_write_action(ufp, "finalize_fileremove", 1) != 0

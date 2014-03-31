@@ -48,14 +48,14 @@ static void spawn_finalizer()
 	int pipe_fds[2];
 
 	if (pipe(pipe_fds) != 0) {
-		uncolog_set_error(&ufp, "pipe failed:%d\n", errno);
+		uncolog_set_error(&ufp, errno, "pipe failed");
 		return;
 	}
 	switch (fork()) {
 	case 0: // child proc
 		break;
 	case -1: // fork failed
-		uncolog_set_error(&ufp,"fork failed:%d\n", errno);
+		uncolog_set_error(&ufp, errno, "fork failed");
 		close(pipe_fds[0]);
 		close(pipe_fds[1]);
 		return;
@@ -184,18 +184,18 @@ static int backup_file(int srcfd, const char *srcpath)
 	if ((linkfn = uncolog_get_linkname(&ufp)) == NULL)
 		goto Error;
 	if ((linkfd = default_open(linkfn, O_WRONLY | O_CREAT | O_TRUNC, 0600)) == -1) {
-		fprintf(stderr, "failed to create backup file:%s:%d\n", linkfn, errno);
+		kerr_printf("failed to create backup file:%s", linkfn);
 		goto Error;
 	}
 	// copy contents
 	if (kcopyfd(srcfd, linkfd) != 0) {
-		fprintf(stderr, "failed to backup file:%s:%d\n", srcpath, errno);
+		kerr_printf("failed to backup file:%s", srcpath);
 		goto Error;
 	}
 
 	// copy file attributes that need to be restored on undo: times
 	if (unco_utimes(linkfd, &st, default_futimes) != 0) {
-		fprintf(stderr, "failed to update times of backup file:%s:%d\n", linkfn, errno);
+		kerr_printf("failed to update times of backup file:%s", linkfn);
 		goto Error;
 	}
 	// close linkfd
@@ -220,7 +220,7 @@ static void before_writeopen(const char *path, int oflag)
 	if (strncmp(path, "/dev/", 5) == 0)
 		return;
 	if ((oflag & O_SYMLINK) != 0) {
-		uncolog_set_error(&ufp, "do not know how to handle open(O_SYMLINK) against file:%s\n", path);
+		uncolog_set_error(&ufp, 0, "do not know how to handle open(O_SYMLINK) against file:%s", path);
 		return;
 	}
 
@@ -280,7 +280,7 @@ WRAP(rename, int, (const char *old, const char *new), {
 	if ((backup = uncolog_get_linkname(&ufp)) != NULL) {
 		if (link(new, backup) != 0) {
 			if (errno != ENOENT)
-				uncolog_set_error(&ufp, "failed to create backup link for file:%s:%d\n", new, errno);
+				uncolog_set_error(&ufp, errno, "failed to create backup link for file:%s", new);
 			free(backup);
 			backup = NULL;
 		}
@@ -324,7 +324,7 @@ WRAP(unlink, int, (const char *path), {
 			uncolog_write_argfn(&ufp, path);
 			uncolog_write_argfn(&ufp, backup);
 		} else if (linkerrno != 0) {
-			uncolog_set_error(&ufp, "failed to create link of:%s:%d\n", path, linkerrno);
+			uncolog_set_error(&ufp, linkerrno, "failed to create link of:%s", path);
 		}
 	} else {
 		if (backup != NULL)

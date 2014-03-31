@@ -290,7 +290,7 @@ WRAP(rename, int, (const char *old, const char *new), {
 	ret = orig(old, new);
 
 	if (ret == 0) {
-		uncolog_write_action(&ufp, "rename", backup[0] != '\0' ? 3 : 2);
+		uncolog_write_action(&ufp, "rename", backup != NULL ? 3 : 2);
 		uncolog_write_argfn(&ufp, old);
 		uncolog_write_argfn(&ufp, new);
 		if (backup != NULL)

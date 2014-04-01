@@ -43,6 +43,7 @@ static int (*default_futimes)(int fildes, const struct timeval times[2]);
 static int (*default_link)(const char *path1, const char *path2);
 static int (*default_symlink)(const char *path1, const char *path2);
 static int (*default_unlink)(const char *path);
+static int (*default_rmdir)(const char *path);
 
 static struct uncolog_fp ufp;
 
@@ -52,6 +53,21 @@ static int is_symlink(const char *path)
 	if (lstat(path, &st) != 0)
 		return 0;
 	return (st.st_mode & S_IFMT) == S_IFLNK;
+}
+
+static char *strip_trailing_slashes(const char *path)
+{
+	char *ret;
+	size_t len = strlen(path);
+
+	if ((ret = malloc(len + 1)) == NULL)
+		return NULL;
+	memcpy(ret, path, len);
+	while (len != 0 && ret[len - 1] == '/')
+		--len;
+	ret[len] = '\0';
+
+	return ret;
 }
 
 static void spawn_finalizer()
@@ -160,6 +176,7 @@ extern void _setup_unco_preload()
 	default_link = (int (*)(const char *, const char *))dlsym(RTLD_NEXT, "link");
 	default_symlink = (int (*)(const char *, const char *))dlsym(RTLD_NEXT, "symlink");
 	default_unlink = (int (*)(const char *))dlsym(RTLD_NEXT, "unlink");
+	default_rmdir = (int (*)(const char *))dlsym(RTLD_NEXT, "rmdir");
 
 	// determine the filename
 	if ((env = getenv("UNCO_LOG")) != NULL) {
@@ -236,6 +253,32 @@ static char *backup_as_link(const char *path)
 		if (default_link(path, backup) != 0)
 			goto Exit;
 	}
+
+	success = 1;
+Exit:
+	if (! success) {
+		free(backup);
+		backup = NULL;
+	}
+	return backup;
+}
+
+static char *backup_as_dir(const char *path, int *errnum)
+{
+	char *backup;
+	struct stat st;
+	int success = 0;
+
+	if (lstat(path, &st) != 0) {
+		*errnum = errno;
+		return NULL;
+	}
+
+	if ((backup = uncolog_get_linkname(&ufp)) == NULL)
+		return NULL;
+	if (default_mkdir(backup, st.st_mode & ~S_IFMT) != 0
+		|| chown(backup, st.st_uid, st.st_gid) != 0)
+		goto Exit;
 
 	success = 1;
 Exit:
@@ -453,5 +496,55 @@ WRAP(mkstemp, int, (char *template), {
 		uncolog_write_action(&ufp, "create", 1);
 		uncolog_write_argfn(&ufp, template, 1);
 	}
+	return ret;
+})
+
+WRAP(mkdir, int, (const char *path, mode_t mode), {
+	int ret;
+	char *path_normalized;
+
+	ret = orig(path, mode);
+
+	if (ret == 0) {
+		uncolog_write_action(&ufp, "mkdir", 1);
+		if ((path_normalized = strip_trailing_slashes(path)) != NULL) {
+			uncolog_write_argfn(&ufp, path_normalized, 0);
+			free(path_normalized);
+		} else {
+			uncolog_set_error(&ufp, errno, "unco");
+		}
+	}
+	return ret;
+})
+
+WRAP(rmdir, int, (const char *path), {
+	char *path_normalized;
+	char *backup;
+	int ret;
+	int backup_errno;
+
+	if ((path_normalized = strip_trailing_slashes(path)) == NULL) {
+		uncolog_set_error(&ufp, errno, "unco");
+		return orig(path);
+	}
+	backup = backup_as_dir(path, &backup_errno);
+
+	ret = orig(path);
+
+	if (ret == 0) {
+		if (backup != NULL) {
+			uncolog_write_action(&ufp, "rmdir", 2);
+			uncolog_write_argfn(&ufp, path_normalized, 0);
+			uncolog_write_argfn(&ufp, backup, 1);
+		} else {
+			uncolog_set_error(&ufp, backup_errno, "unco:failed to create backup file of:%s", path_normalized);
+		}
+	} else {
+		if (backup != NULL)
+			default_rmdir(backup);
+	}
+
+	free(path_normalized);
+	free(backup);
 	return ret;
 })

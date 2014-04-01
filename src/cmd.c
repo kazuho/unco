@@ -59,6 +59,8 @@ enum {
 	ACTION_UNLINK,
 	ACTION_LINK,
 	ACTION_SYMLINK,
+	ACTION_MKDIR,
+	ACTION_RMDIR,
 	ACTION_FINALIZE_FILEHASH,
 	ACTION_FINALIZE_FILEREMOVE,
 	ACTION_FINALIZE,
@@ -98,6 +100,13 @@ struct action {
 		struct {
 			char *path2;
 		} symlink;
+		struct {
+			char *path;
+		} mkdir;
+		struct {
+			char *path;
+			char *backup;
+		} rmdir;
 		struct {
 			char *path;
 			char *sha1hex;
@@ -205,6 +214,15 @@ static int consume_log(const char *logpath, int (*cb)(struct action *action, voi
 			assert(action.argc == 1);
 			action.type = ACTION_SYMLINK;
 			READ_ARGSTR(action.symlink.path2);
+		} else if (strcmp(name, "mkdir") == 0) {
+			assert(action.argc == 1);
+			action.type = ACTION_MKDIR;
+			READ_ARGSTR(action.mkdir.path);
+		} else if (strcmp(name, "rmdir") == 0) {
+			assert(action.argc == 2);
+			action.type = ACTION_RMDIR;
+			READ_ARGSTR(action.rmdir.path);
+			READ_ARGSTR(action.rmdir.backup);
 		} else if (strcmp(name, "finalize_filehash") == 0) {
 			assert(action.argc == 2);
 			action.type = ACTION_FINALIZE_FILEHASH;
@@ -360,6 +378,14 @@ static int _finalize_action_handler(struct action *action, void *cb_arg)
 		if (_finalize_mark_file(info, action->symlink.path2, 1) != 0)
 			return -1;
 		break;
+	case ACTION_MKDIR:
+		if (_finalize_mark_file(info, action->mkdir.path, 1) != 0)
+			return -1;
+		break;
+	case ACTION_RMDIR:
+		if (_finalize_mark_file(info, action->rmdir.path, 0) != 0)
+			return -1;
+		break;
 	case ACTION_FINALIZE_FILEHASH:
 	case ACTION_FINALIZE_FILEREMOVE:
 	case ACTION_FINALIZE:
@@ -397,9 +423,18 @@ static int _finalize_append_action_dir(struct uncolog_fp *ufp, const char *dir, 
 
 			if (is_existing) {
 				// file should exist, append its sha1
-				if (sha1hex_file(fn, sha1hex) != 0) {
-					uncolog_set_error(ufp, errno, "unco:failed to sha1 file:%s", fn);
+				if (lstat(fn, &st) != 0) {
+					uncolog_set_error(ufp, 0, "unexpected condition, file logged as being created/modified does not exist:%s", fn);
 					goto Exit;
+				}
+				if ((st.st_mode & S_IFMT) == S_IFREG) {
+					if (sha1hex_file(fn, sha1hex) != 0) {
+						uncolog_set_error(ufp, errno, "unco:failed to sha1 file:%s", fn);
+						goto Exit;
+					}
+				} else {
+					// TODO collect appropriate hash depending on the file type
+					sha1hex[0] = '\0';
 				}
 				if (uncolog_write_action(ufp, "finalize_filehash", 2) != 0
 					|| uncolog_write_argbuf(ufp, fn, strlen(fn)) != 0
@@ -690,22 +725,61 @@ static int _revert_action_handler(struct action *action, void *cb_arg)
 		}
 		break;
 
+	case ACTION_MKDIR:
+
+		{
+			char *path_quoted;
+
+			if (KFREE_PTRS_PUSH(path_quoted = kshellquote(action->mkdir.path)) == NULL)
+				goto Exit;
+			if (klist_insert_printf(&info->lines, klist_next(&info->lines, NULL),
+				"# revert mkdir\n"
+				"rmdir %s || exit 1\n",
+				path_quoted) == NULL)
+				goto Exit;
+		}
+		break;
+
+	case ACTION_RMDIR:
+
+		{
+			char *path_quoted;
+			struct stat st;
+
+			if (KFREE_PTRS_PUSH(path_quoted = kshellquote(action->rmdir.path)) == NULL)
+				goto Exit;
+			if (lstat(action->rmdir.backup, &st) != 0) {
+				kerr_printf("unco:cannot stat dir:%s", action->rmdir.backup);
+				goto Exit;
+			}
+			if (klist_insert_printf(&info->lines, klist_next(&info->lines, NULL),
+				"# revert rmdir\n"
+				"mkdir %s || exit 1\n"
+				"chown %d:%d %s || exit 1\n"
+				"chmod %o %s || exit 1\n",
+				path_quoted, st.st_uid, st.st_gid, path_quoted, st.st_mode & ~S_IFMT, path_quoted) == NULL)
+				goto Exit;
+		}
+		break;
+
 	case ACTION_FINALIZE_FILEHASH:
 		{
 			char *path_quoted;
 
-			if (KFREE_PTRS_PUSH(path_quoted = kshellquote(action->finalize_filehash.path)) == NULL)
-				goto Exit;
-			if (klist_insert_printf(&info->lines, klist_next(&info->lines, NULL),
-					"# check that file has not been altered since the recorded change\n"
-					"SHA1HEX=`openssl sha1 < %s`\n"
-					"[ $? -eq 0 ] || exit 1\n"
-					"if [ \"$SHA1HEX\" != \"%s\" ] ; then\n"
-					"    echo 'file altered since recorded change:%s' >&2\n"
-					"    exit 1\n"
-					"fi\n",
-					path_quoted, action->finalize_filehash.sha1hex, path_quoted) == NULL)
-				goto Exit;
+			if (action->finalize_filehash.sha1hex[0] != '\0') {
+				if (KFREE_PTRS_PUSH(path_quoted = kshellquote(action->finalize_filehash.path)) == NULL)
+					goto Exit;
+				if (klist_insert_printf(&info->lines, klist_next(&info->lines, NULL),
+						"# check that file has not been altered since the recorded change\n"
+						"SHA1HEX=`openssl sha1 < %s`\n"
+						"[ $? -eq 0 ] || exit 1\n"
+						"if [ \"$SHA1HEX\" != \"%s\" ] ; then\n"
+						"    echo 'file altered since recorded change:%s' >&2\n"
+						"    exit 1\n"
+						"fi\n",
+						path_quoted, action->finalize_filehash.sha1hex, path_quoted) == NULL)
+					goto Exit;
+			}
 		}
 		break;
 

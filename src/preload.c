@@ -40,6 +40,9 @@
 static int (*default_open)(const char *path, int oflag, ...);
 static int (*default_mkdir)(const char *path, mode_t mode);
 static int (*default_futimes)(int fildes, const struct timeval times[2]);
+static int (*default_link)(const char *path1, const char *path2);
+static int (*default_symlink)(const char *path1, const char *path2);
+static int (*default_unlink)(const char *path);
 
 static struct uncolog_fp ufp;
 
@@ -154,6 +157,9 @@ extern void _setup_unco_preload()
 	default_open = (int (*)(const char*, int, ...))dlsym(RTLD_NEXT, "open");
 	default_mkdir = (int (*)(const char *, mode_t))dlsym(RTLD_NEXT, "mkdir");
 	default_futimes = (int (*)(int, const struct timeval[2]))dlsym(RTLD_NEXT, "futimes");
+	default_link = (int (*)(const char *, const char *))dlsym(RTLD_NEXT, "link");
+	default_symlink = (int (*)(const char *, const char *))dlsym(RTLD_NEXT, "symlink");
+	default_unlink = (int (*)(const char *))dlsym(RTLD_NEXT, "unlink");
 
 	// determine the filename
 	if ((env = getenv("UNCO_LOG")) != NULL) {
@@ -224,10 +230,10 @@ static char *backup_as_link(const char *path)
 		if ((symlinklen = readlink(path, symlinkbuf, sizeof(symlinkbuf) - 1)) == -1)
 			goto Exit;
 		symlinkbuf[symlinklen] = '\0';
-		if (symlink(symlinkbuf, backup) != 0)
+		if (default_symlink(symlinkbuf, backup) != 0)
 			goto Exit;
 	} else {
-		if (link(path, backup) != 0)
+		if (default_link(path, backup) != 0)
 			goto Exit;
 	}
 
@@ -411,7 +417,7 @@ WRAP(unlink, int, (const char *path), {
 		}
 	} else {
 		if (backup != NULL)
-			unlink(backup);
+			default_unlink(backup);
 	}
 
 	free(backup);

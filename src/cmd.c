@@ -626,15 +626,26 @@ static int _revert_action_handler(struct action *action, void *cb_arg)
 	case ACTION_UNLINK:
 		{
 			char *path_quoted, *backup_quoted;
+			struct stat st;
 
 			if (KFREE_PTRS_PUSH(path_quoted = kshellquote(action->overwrite.path)) == NULL
 				|| KFREE_PTRS_PUSH(backup_quoted = kshellquote(action->overwrite.backup)) == NULL)
 				goto Exit;
-			if (klist_insert_printf(&info->lines, klist_next(&info->lines, NULL),
-					"# revert unlink\n"
-					"ln %s %s || exit 1\n",
-					backup_quoted, path_quoted) == NULL)
+			if (lstat(action->overwrite.backup, &st) != 0)
 				goto Exit;
+			if ((st.st_mode & S_IFMT) == S_IFLNK) {
+				if (klist_insert_printf(&info->lines, klist_next(&info->lines, NULL),
+						"# revert unlink of symlink\n"
+						"ln -s `readlink %s` %s || exit 1\n",
+						backup_quoted, path_quoted) == NULL)
+					goto Exit;
+			} else {
+				if (klist_insert_printf(&info->lines, klist_next(&info->lines, NULL),
+						"# revert unlink\n"
+						"ln %s %s || exit 1\n",
+						backup_quoted, path_quoted) == NULL)
+					goto Exit;
+			}
 		}
 		break;
 

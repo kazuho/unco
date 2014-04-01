@@ -348,7 +348,7 @@ char *uncolog_get_linkname(struct uncolog_fp *ufp)
 			perror("unco");
 			return NULL;
 		}
-		if (stat(link, &st) != 0)
+		if (lstat(link, &st) != 0)
 			return link;
 		free(link);
 	}

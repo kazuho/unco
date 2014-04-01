@@ -43,6 +43,14 @@ static int (*default_futimes)(int fildes, const struct timeval times[2]);
 
 static struct uncolog_fp ufp;
 
+static int is_symlink(const char *path)
+{
+	struct stat st;
+	if (lstat(path, &st) != 0)
+		return 0;
+	return (st.st_mode & S_IFMT) == S_IFLNK;
+}
+
 static void spawn_finalizer()
 {
 	int pipe_fds[2];
@@ -202,7 +210,37 @@ Error:
 	uncolog_init_fp(&ufp);
 }
 
-static int backup_file(int srcfd, const char *srcpath)
+static char *backup_as_link(const char *path)
+{
+	char *backup;
+	char symlinkbuf[PATH_MAX];
+	ssize_t symlinklen;
+	int success = 0;
+
+	if ((backup = uncolog_get_linkname(&ufp)) == NULL)
+		return NULL;
+
+	if (is_symlink(path)) {
+		if ((symlinklen = readlink(path, symlinkbuf, sizeof(symlinkbuf) - 1)) == -1)
+			goto Exit;
+		symlinkbuf[symlinklen] = '\0';
+		if (symlink(symlinkbuf, backup) != 0)
+			goto Exit;
+	} else {
+		if (link(path, backup) != 0)
+			goto Exit;
+	}
+
+	success = 1;
+Exit:
+	if (! success) {
+		free(backup);
+		backup = NULL;
+	}
+	return backup;
+}
+
+static int backup_as_copy(int srcfd, const char *srcpath)
 {
 	struct stat st;
 	char *linkfn;
@@ -265,7 +303,7 @@ static void before_writeopen(const char *path, int oflag)
 	// file exists, back it up
 	uncolog_write_action(&ufp, "overwrite", 2);
 	uncolog_write_argfn(&ufp, path);
-	backup_file(cur_fd, path);
+	backup_as_copy(cur_fd, path);
 
 	close(cur_fd);
 }
@@ -309,13 +347,9 @@ WRAP(rename, int, (const char *old, const char *new), {
 	int ret;
 
 	// create backup link
-	if ((backup = uncolog_get_linkname(&ufp)) != NULL) {
-		if (link(new, backup) != 0) {
-			if (errno != ENOENT)
-				uncolog_set_error(&ufp, errno, "unco:rename:failed to create backup link for file:%s", new);
-			free(backup);
-			backup = NULL;
-		}
+	if ((backup = backup_as_link(new)) == NULL) {
+		if (errno != ENOENT)
+			uncolog_set_error(&ufp, errno, "unco:rename:failed to create backup link for file:%s", new);
 	}
 
 	// take the action
@@ -334,17 +368,12 @@ WRAP(rename, int, (const char *old, const char *new), {
 
 WRAP(unlink, int, (const char *path), {
 	char *backup;
-	int linkerrno = 0;
+	int backup_errno = 0;
 	int ret;
 
 	// create backup link
-	if ((backup = uncolog_get_linkname(&ufp)) != NULL) {
-		if (link(path, backup) != 0) {
-			free(backup);
-			backup = NULL;
-			linkerrno = errno;
-		}
-	}
+	if ((backup = backup_as_link(path)) == NULL)
+		backup_errno = errno;
 
 	// unlink
 	ret = orig(path);
@@ -355,8 +384,8 @@ WRAP(unlink, int, (const char *path), {
 			uncolog_write_action(&ufp, "unlink", 2);
 			uncolog_write_argfn(&ufp, path);
 			uncolog_write_argfn(&ufp, backup);
-		} else if (linkerrno != 0) {
-			uncolog_set_error(&ufp, linkerrno, "unco:unlink:failed to create backup link of:%s", path);
+		} else if (backup_errno != 0) {
+			uncolog_set_error(&ufp, backup_errno, "unco:unlink:failed to create backup link of:%s", path);
 		}
 	} else {
 		if (backup != NULL)

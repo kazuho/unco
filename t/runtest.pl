@@ -8,6 +8,7 @@ use Test::More tests => 3;
 
 my $TEST_DIR = "/tmp/unco-test";
 my $TEST_CWD = "$TEST_DIR/root";
+my $WAIT = $ENV{UNCO_TEST_WAIT} || 0;
 
 my $script_dir = $ARGV[0]
 	or die "Usage: $0 <script-dir>\n";
@@ -34,15 +35,21 @@ system("unco", "record", "sh", "$script_dir/test.sh") == 0
 	or die "$script_dir/test.sh failed:$?\n";
 my $sig_post_record = create_sig();
 
+sleep $WAIT;
+
 # undo and take sig, test
 system("unco", "undo", "1") == 0
 	or die "failed to undo the recorded changes:$?\n";
 is create_sig(), $sig_post_init, "undo-vs-post_init";
 
+sleep $WAIT;
+
 # redo and take sig, test
 system("unco", "redo", "1") == 0
 	or die "failed to redo the recorded changes:$?\n";
 is create_sig(), $sig_post_record, "redo-vs-post_record";
+
+sleep $WAIT;
 
 # undo once more and take sig, test
 system("unco", "undo", "1") == 0

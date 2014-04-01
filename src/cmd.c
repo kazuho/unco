@@ -22,6 +22,7 @@
  * THE SOFTWARE.
  */
 #include <assert.h>
+#include <dirent.h>
 #include <errno.h>
 #include <fcntl.h>
 #include <getopt.h>
@@ -229,35 +230,92 @@ Exit:
 }
 
 struct _finalize_info {
-	klist existing_files;
-	klist removed_files;
+	char *existing_files_dir;
+	char *removed_files_dir;
 	int is_finalized;
 };
 
-static int _finalize_mark_file_in_list(klist *l, const char *fn, int exists)
+static char *_finalize_encode_fn(const char *fn)
 {
-	char *item;
+	kstrbuf buf;
 
-	for (item = NULL; (item = klist_next(l, item)) != NULL; )
-		if (strcmp(item, fn) == 0)
+	memset(&buf, 0, sizeof(buf));
+	for (; *fn != '\0'; fn++) {
+		switch (*fn) {
+		case '/': // becomes %
+			if (kstrbuf_append_char(&buf, '%') == NULL)
+				goto Error;
 			break;
+		case '%': // becomes %%
+			if (kstrbuf_append_str(&buf, "%%") == NULL)
+				goto Error;
+			break;
+		default:
+			if (kstrbuf_append_char(&buf, *fn) == NULL)
+				goto Error;
+		}
+	}
+	return buf.str;
 
-	if ((item != NULL) != exists) {
-		if (exists) {
-			if (klist_insert(l, NULL, fn, strlen(fn) + 1) == NULL)
-				return -1;
-		} else {
-			klist_erase(l, item);
+Error:
+	free(buf.str);
+	return NULL;
+}
+
+static char *_finalize_decode_fn(const char *enc)
+{
+	kstrbuf buf;
+	int ch;
+
+	memset(&buf, 0, sizeof(buf));
+	while ((ch = *enc++) != '\0') {
+		if (ch == '%') {
+			if (*enc == '%')
+				++enc;
+			else
+				ch = '/';
+		}
+		if (kstrbuf_append_char(&buf, ch) == NULL) {
+			free(buf.str);
+			return NULL;
 		}
 	}
 
-	return 0;
+	return buf.str;
+}
+
+static int _finalize_mark_file_in_list(const char *dir, const char *fn, int exists)
+{
+	char *fn_encoded = NULL, *path = NULL;
+	int ret = -1;
+	struct stat st;
+
+	if ((fn_encoded = _finalize_encode_fn(fn)) == NULL)
+		goto Exit;
+	if ((path = ksprintf("%s/%s", dir, fn_encoded)) == NULL)
+		goto Exit;
+
+	if (lstat(path, &st) == 0 != exists) {
+		if (exists) {
+			if (symlink(dir, path) != 0)
+				goto Exit;
+		} else {
+			if (unlink(path) != 0)
+				goto Exit;
+		}
+	}
+
+	ret = 0;
+Exit:
+	free(fn_encoded);
+	free(path);
+	return ret;
 }
 
 static int _finalize_mark_file(struct _finalize_info *info, const char* fn, int exists)
 {
-	if (_finalize_mark_file_in_list(&info->existing_files, fn, exists) != 0
-		|| _finalize_mark_file_in_list(&info->removed_files, fn, ! exists) != 0)
+	if (_finalize_mark_file_in_list(info->existing_files_dir, fn, exists) != 0
+		|| _finalize_mark_file_in_list(info->removed_files_dir, fn, ! exists) != 0)
 		return -1;
 	return 0;
 }
@@ -303,35 +361,69 @@ static int _finalize_action_handler(struct action *action, void *cb_arg)
 	return 0;
 }
 
-static int _finalize_append_action(struct uncolog_fp* ufp, struct _finalize_info* info)
+static int _finalize_append_action_dir(struct uncolog_fp *ufp, const char *dir, int is_existing)
 {
-	const char *fn;
+	DIR *dp;
+	struct dirent *ent, entbuf;
+	char *fn = NULL;
 	char sha1hex[SHA1HashSize * 2 + 1];
 	struct stat st;
+	int ret = -1;
 
-	// append existing files
-	for (fn = NULL; (fn = klist_next(&info->existing_files, fn)) != NULL; ) {
-		if (sha1hex_file(fn, sha1hex) != 0) {
-			uncolog_set_error(ufp, errno, "failed to sha1 file:%s", fn);
-			return -1;
-		}
-		if (uncolog_write_action(ufp, "finalize_filehash", 2) != 0
-			|| uncolog_write_argbuf(ufp, fn, strlen(fn)) != 0
-			|| uncolog_write_argbuf(ufp, sha1hex, strlen(sha1hex)) != 0)
-			return -1;
+	if ((dp = opendir(dir)) == NULL) {
+		uncolog_set_error(ufp, errno, "unco:failed to opendir temporary dir:%s", dir);
+		return -1;
 	}
-	// append removed files
-	for (fn = NULL; (fn = klist_next(&info->removed_files, fn)) != NULL; ) {
-		if (lstat(fn, &st) == 0) {
-			uncolog_set_error(ufp, 0, "unexpected condition, file logged as being removed exists:%s", fn);
-			return -1;
+	while (readdir_r(dp, &entbuf, &ent) == 0 && ent != NULL) {
+		if (strcmp(ent->d_name, ".") == 0 || strcmp(ent->d_name, "..") == 0) {
+			// skip
+		} else {
+			if ((fn = _finalize_decode_fn(ent->d_name)) == NULL) {
+				uncolog_set_error(ufp, errno, "unco");
+				goto Exit;
+			}
+
+			if (is_existing) {
+				// file should exist, append its sha1
+				if (sha1hex_file(fn, sha1hex) != 0) {
+					uncolog_set_error(ufp, errno, "unco:failed to sha1 file:%s", fn);
+					goto Exit;
+				}
+				if (uncolog_write_action(ufp, "finalize_filehash", 2) != 0
+					|| uncolog_write_argbuf(ufp, fn, strlen(fn)) != 0
+					|| uncolog_write_argbuf(ufp, sha1hex, strlen(sha1hex)) != 0)
+					goto Exit;
+			} else {
+				// file should not exist
+				if (lstat(fn, &st) == 0) {
+					uncolog_set_error(ufp, 0, "unexpected condition, file logged as being removed exists:%s", fn);
+					goto Exit;
+				}
+				if (uncolog_write_action(ufp, "finalize_fileremove", 1) != 0
+					|| uncolog_write_argbuf(ufp, fn, strlen(fn)) != 0)
+					goto Exit;
+			}
+
+			free(fn);
+			fn = NULL;
 		}
-		if (uncolog_write_action(ufp, "finalize_fileremove", 1) != 0
-			|| uncolog_write_argbuf(ufp, fn, strlen(fn)) != 0)
-			return -1;
 	}
 
-	// append action
+	ret = 0;
+Exit:
+	closedir(dp);
+	free(fn);
+	return ret;
+}
+
+static int _finalize_append_action(struct uncolog_fp* ufp, struct _finalize_info* info)
+{
+	if (_finalize_append_action_dir(ufp, info->existing_files_dir, 1) != 0)
+		return -1;
+
+	if (_finalize_append_action_dir(ufp, info->removed_files_dir, 0) != 0)
+		return -1;
+
 	if (uncolog_write_action(ufp, "finalize", 0) != 0)
 		return -1;
 
@@ -342,21 +434,46 @@ static int finalize(const char *logfn)
 {
 	struct _finalize_info info;
 	struct uncolog_fp ufp;
+	int ret;
+
+	memset(&info, 0, sizeof(info));
+	uncolog_init_fp(&ufp);
 
 	// determine the files that should be finalized
-	memset(&info, 0, sizeof(info));
-	if (consume_log(logfn, _finalize_action_handler, &info) != 0)
-		return EX_DATAERR;
+	if ((info.existing_files_dir = strdup("/tmp/unco.XXXXXX")) == NULL
+		|| mkdtemp(info.existing_files_dir) == NULL
+		|| (info.removed_files_dir = strdup("/tmp/unco.XXXXXX")) == NULL
+		|| mkdtemp(info.removed_files_dir) == NULL) {
+		perror("unco:failed to create temporary directories");
+		ret = EX_OSERR;
+		goto Exit;
+	}
+	if (consume_log(logfn, _finalize_action_handler, &info) != 0) {
+		ret = EX_DATAERR;
+		goto Exit;
+	}
 
 	// open log and finalize
-	if (uncolog_open(&ufp, logfn, 'a', open, mkdir) != 0)
-		return EX_SOFTWARE;
-	if (_finalize_append_action(&ufp, &info) != 0) {
-		uncolog_close(&ufp);
-		return EX_OSERR;
+	if (uncolog_open(&ufp, logfn, 'a', open, mkdir) != 0) {
+		ret = EX_SOFTWARE;
+		goto Exit;
 	}
-	uncolog_close(&ufp);
+	if (_finalize_append_action(&ufp, &info) != 0) {
+		ret = EX_OSERR;
+		goto Exit;
+	}
 
+	ret = 0;
+Exit:
+	uncolog_close(&ufp);
+	if (info.existing_files_dir != NULL) {
+		kunlink_recursive(info.existing_files_dir);
+		free(info.existing_files_dir);
+	}
+	if (info.removed_files_dir != NULL) {
+		kunlink_recursive(info.removed_files_dir);
+		free(info.removed_files_dir);
+	}
 	return 0;
 }
 
@@ -398,8 +515,10 @@ static int do_record(int argc, char **argv)
 		}
 	} else {
 		if (log_file != NULL) {
-			if (uncolog_delete(log_file, 1) != 0)
+			if (kunlink_recursive(log_file) != 0 && ! (errno = EEXIST || errno == ENOENT)) {
+				kerr_printf("failed to remove log:%s", log_file);
 				return EX_OSERR;
+			}
 		}
 	}
 
@@ -471,10 +590,10 @@ static int _revert_action_handler(struct action *action, void *cb_arg)
 			if (klist_insert_printf(&info->lines, klist_next(&info->lines, NULL),
 					"# revert overwrite\n"
 					"ls %s > /dev/null || exit 1\n" // target should exist
-					"cat %s > %s || exit 1\n",
-					path_quoted, backup_quoted, path_quoted) == NULL)
+					"cat %s > %s || exit 1\n"
+					"touch -r %s %s || exit 1\n",
+					path_quoted, backup_quoted, path_quoted, backup_quoted, path_quoted) == NULL)
 				goto Exit;
-			// TODO: adjust mtime
 		}
 		break;
 
@@ -702,7 +821,8 @@ static int do_revert(int argc, char **argv, int is_redo)
 		}
 		if (is_redo) {
 			// remove undo log
-			if (uncolog_delete(undo_logfn, 0) != 0) {
+			if (kunlink_recursive(undo_logfn) != 0) {
+				kerr_printf("failed to remove undo log at:%s", undo_logfn);
 				exit = EX_DATAERR;
 				goto Exit;
 			}

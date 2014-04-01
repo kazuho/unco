@@ -56,8 +56,6 @@ int uncolog_read_action(struct uncolog_fp *ufp, char *action, int *argc);
 int uncolog_read_argn(struct uncolog_fp *ufp, off_t *n);
 void *uncolog_read_argbuf(struct uncolog_fp *ufp, size_t *sz);
 
-int uncolog_delete(const char *path, int force);
-
 int unco_utimes(int fd, const struct stat *st, int (*futimes)(int, const struct timeval times[2]));
 
 char *unco_get_default_dir(void);

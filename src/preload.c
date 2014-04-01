@@ -443,3 +443,15 @@ WRAP(symlink, int, (const char *path1, const char*path2), {
 	}
 	return ret;
 })
+
+WRAP(mkstemp, int, (char *template), {
+	int ret;
+
+	ret = orig(template);
+
+	if (ret != -1) {
+		uncolog_write_action(&ufp, "create", 1);
+		uncolog_write_argfn(&ufp, template, 1);
+	}
+	return ret;
+})

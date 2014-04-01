@@ -94,7 +94,7 @@ char *kdirname(const char *path)
 
 	if ((lastslash = strrchr(path, '/')) == NULL)
 		return strdup(".");
-	len = lastslash - path - 1;
+	len = lastslash - path;
 	if ((ret = malloc(len + 1)) == NULL)
 		return NULL;
 	memcpy(ret, path, len);

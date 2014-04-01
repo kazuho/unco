@@ -46,6 +46,7 @@ char *kshellquote(const char *raw);
 char *kdirname(const char *path);
 
 ssize_t kread_nosig(int fd, void *data, size_t len);
+void *kread_full(int fd, size_t *len);
 int kwrite_full(int fd, const void *data, size_t len);
 int kcopyfd(int srcfd, int dstfd);
 

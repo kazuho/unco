@@ -22,6 +22,7 @@
  * THE SOFTWARE.
  */
 #include <errno.h>
+#include <stdlib.h>
 #include <unistd.h>
 #include "kazutils.h"
 
@@ -32,6 +33,37 @@ ssize_t kread_nosig(int fd, void *data, size_t len)
 		&& (errno == EAGAIN || errno == EWOULDBLOCK))
 		;
 	return ret;
+}
+
+void *kread_full(int fd, size_t *len)
+{
+	char *bytes, *tmp;
+	size_t bufsz = 4096, offset = 0;
+	ssize_t rret;
+
+	if ((bytes = malloc(bufsz)) == NULL)
+		return NULL;
+
+	while ((rret = kread_nosig(fd, bytes + offset, bufsz - offset)) != 0) {
+		if (rret == -1)
+			goto Exit;
+		offset += rret;
+		if (offset == bufsz) {
+			bufsz *= 2;
+			if ((tmp = realloc(bytes, bufsz)) == NULL)
+				goto Exit;
+			bytes = tmp;
+		}
+	}
+
+Exit:
+	if (rret == 0) {
+		*len = offset;
+	} else {
+		free(bytes);
+		bytes = NULL;
+	}
+	return bytes;
 }
 
 int kwrite_full(int fd, const void *data, size_t len)
@@ -68,4 +100,3 @@ int kcopyfd(int srcfd, int dstfd)
 
 	return rret;
 }
-

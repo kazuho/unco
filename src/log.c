@@ -302,35 +302,50 @@ Error:
 	return NULL;
 }
 
-int uncolog_write_argfn(struct uncolog_fp *ufp, const char *path)
+int uncolog_write_argfn(struct uncolog_fp *ufp, const char *path, int resolve_file)
 {
-	char *cwd = NULL, *abspath = NULL;
+	char *abspath = NULL, *dirname = NULL, *real_dirname = NULL;
+	const char *basename;
 	int ret = -1;
 
 	if (ufp->_fd == -1)
 		return -1;
 
-	/* change path to absolute
-	 * Cannot use realpath since it resolves symlinks, since the function needs
-	 * to support non-existent filenames.  Also, patterns like "foo/.." should
-	 * be preserved since it might not point back if foo is a symlink.
-	 */
-	if (path[0] != '/') {
-		if ((cwd = getcwd(NULL, 0)) == NULL
-			|| (abspath = ksprintf("%s/%s", cwd, path)) == NULL) {
-			perror("unco");
+	if (resolve_file) {
+		if ((abspath = realpath(path, NULL)) == NULL) {
+			uncolog_set_error(ufp, errno, "unco:realpath failed against:%s", path);
 			goto Exit;
 		}
-		path = abspath;
+	} else {
+		// determine basename and dirname
+		if ((basename = strrchr(path, '/')) != NULL)
+			++basename;
+		else
+			basename = path;
+		if ((dirname = kdirname(path)) == NULL) {
+			uncolog_set_error(ufp, errno, "unco");
+			goto Exit;
+		}
+		// convert dirname to realpath
+		if ((real_dirname = realpath(dirname, NULL)) == NULL) {
+			uncolog_set_error(ufp, errno, "unco:realpath failed against:%s", dirname);
+			goto Exit;
+		}
+		// concat
+		if ((abspath = ksprintf("%s/%s", real_dirname, basename)) == NULL) {
+			uncolog_set_error(ufp, errno, "unco");
+			goto Exit;
+		}
 	}
 
-	if (uncolog_write_argbuf(ufp, path, strlen(path)) != 0)
+	if (uncolog_write_argbuf(ufp, abspath, strlen(abspath)) != 0)
 		goto Exit;
 
 	ret = 0;
 Exit:
-	free(cwd);
 	free(abspath);
+	free(dirname);
+	free(real_dirname);
 	return ret;
 }
 

@@ -49,7 +49,7 @@ int uncolog_get_fd(struct uncolog_fp *ufp);
 int uncolog_write_action(struct uncolog_fp *ufp, const char *action, int argc);
 int uncolog_write_argn(struct uncolog_fp *ufp, off_t n);
 int uncolog_write_argbuf(struct uncolog_fp *ufp, const void *data, size_t len);
-int uncolog_write_argfn(struct uncolog_fp *ufp, const char *path);
+int uncolog_write_argfn(struct uncolog_fp *ufp, const char *path, int resolve_file);
 char *uncolog_get_linkname(struct uncolog_fp *ufp);
 
 int uncolog_read_action(struct uncolog_fp *ufp, char *action, int *argc);

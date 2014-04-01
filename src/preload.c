@@ -240,72 +240,66 @@ Exit:
 	return backup;
 }
 
-static int backup_as_copy(int srcfd, const char *srcpath)
+static char *before_writeopen(const char *path, int *errnum)
 {
+	char *backup = NULL;
+	int srcfd = -1, dstfd = -1, success = 0;
 	struct stat st;
-	char *linkfn;
-	int linkfd = -1;
 
+	// FIXME better blacklisting
+	if (strncmp(path, "/dev/", 5) == 0) {
+		*errnum = 0;
+		return NULL;
+	}
+
+	// open source
+	if ((srcfd = default_open(path, O_RDONLY)) == -1) {
+		*errnum = errno;
+		goto Exit;
+	}
 	fstat(srcfd, &st); // TODO need to check error?
 
-	// create backup file
-	if ((linkfn = uncolog_get_linkname(&ufp)) == NULL)
-		goto Error;
-	if ((linkfd = default_open(linkfn, O_WRONLY | O_CREAT | O_TRUNC, 0600)) == -1) {
-		kerr_printf("failed to create backup file:%s", linkfn);
-		goto Error;
+	// create backup and copy, update the times, and return
+	if ((backup = uncolog_get_linkname(&ufp)) == NULL)
+		return NULL;
+	if ((dstfd = default_open(backup, O_WRONLY | O_CREAT | O_EXCL)) == -1) {
+		*errnum = errno;
+		goto Exit;
 	}
-	// copy contents
-	if (kcopyfd(srcfd, linkfd) != 0) {
-		kerr_printf("failed to backup file:%s", srcpath);
-		goto Error;
+	if (kcopyfd(srcfd, dstfd) != 0) {
+		*errnum = errno;
+		goto Exit;
+	}
+	if (unco_utimes(dstfd, &st, default_futimes) != 0) {
+		*errnum = errno;
+		goto Exit;
 	}
 
-	// copy file attributes that need to be restored on undo: times
-	if (unco_utimes(linkfd, &st, default_futimes) != 0) {
-		kerr_printf("failed to update times of backup file:%s", linkfn);
-		goto Error;
+	success = 1;
+Exit:
+	if (! success) {
+		if (srcfd != -1)
+			close(srcfd);
+		free(backup);
+		if (dstfd != -1)
+			close(dstfd);
 	}
-	// close linkfd
-	close(linkfd);
-	linkfd = -1;
-	// write log
-	if (uncolog_write_argfn(&ufp, linkfn) != 0)
-		goto Error;
-
-	return 0;
-Error:
-	if (linkfd != -1)
-		close(linkfd);
-	free(linkfn);
-	return -1;
+	return backup;
 }
 
-static void before_writeopen(const char *path, int oflag)
+static void on_writeopen_success(const char *path, char *backup, int backup_errno)
 {
-	int cur_fd;
-
-	if (strncmp(path, "/dev/", 5) == 0)
-		return;
-	if ((oflag & O_SYMLINK) != 0) {
-		uncolog_set_error(&ufp, 0, "unco:do not know how to handle open(O_SYMLINK) against file:%s", path);
-		return;
-	}
-
-	// open the existing file
-	if ((cur_fd = default_open(path, oflag & (O_SYMLINK | O_NOFOLLOW))) == -1) {
-		// file does not exist
+	if (backup != NULL) {
+		uncolog_write_action(&ufp, "overwrite", 2);
+		uncolog_write_argfn(&ufp, path, 1);
+		uncolog_write_argfn(&ufp, backup, 0);
+		free(backup);
+	} else if (backup_errno == ENOENT) {
 		uncolog_write_action(&ufp, "create", 1);
-		uncolog_write_argfn(&ufp, path);
-		return;
+		uncolog_write_argfn(&ufp, path, 1);
+	} else if (backup_errno != 0) {
+		uncolog_set_error(&ufp, backup_errno, "failed to create backup of file:%s", path);
 	}
-
-	// file exists, back it up
-	uncolog_write_action(&ufp, "overwrite", 2);
-	uncolog_write_argfn(&ufp, path);
-	backup_as_copy(cur_fd, path);
-
-	close(cur_fd);
 }
 
 #define WRAP(Fn, RetType, Args, Body) \
@@ -321,10 +315,21 @@ extern RetType Fn Args { \
 
 WRAP(open, int, (const char *path, int oflag, ...), {
 	va_list arg;
+	char *backup = NULL;
+	int is_write;
+	int backup_errno;
+	int ret;
 	mode_t mode = 0;
 
-	if ((oflag & (O_WRONLY | O_RDWR | O_APPEND | O_CREAT | O_TRUNC)) != 0) {
-		before_writeopen(path, oflag);
+	is_write = (oflag & (O_WRONLY | O_RDWR)) != 0;
+
+	if (is_write) {
+		if ((oflag & (O_NOFOLLOW | O_SYMLINK)) != 0) {
+			uncolog_set_error(&ufp, 0, "unco:open:cannot handle open with O_NOFOLLOW|O_SYMLINK against file:%s", path);
+			backup_errno = 0;
+		} else {
+			backup = before_writeopen(path, &backup_errno);
+		}
 	}
 
 	if ((oflag & O_CREAT) != 0) {
@@ -332,14 +337,31 @@ WRAP(open, int, (const char *path, int oflag, ...), {
 		mode = va_arg(arg, int);
 		va_end(arg);
 	}
-	return orig(path, oflag, mode);
+	ret = orig(path, oflag, mode);
+
+	if (ret != -1 && is_write)
+		on_writeopen_success(path, backup, backup_errno);
+
+	return ret;
 })
 
 WRAP(fopen, FILE*, (const char *path, const char *mode), {
-	if (strchr(mode, 'w') != NULL || strchr(mode, 'a') != NULL) {
-		before_writeopen(path, 0);
-	}
-	return orig(path, mode);
+	char *backup = NULL;
+	int is_write;
+	int backup_errno;
+	FILE *ret;
+
+	is_write = strchr(mode, 'w') != NULL || strchr(mode, 'a') != NULL;
+
+	if (is_write)
+		backup = before_writeopen(path, &backup_errno);
+
+	ret = orig(path, mode);
+
+	if (ret != NULL && is_write)
+		on_writeopen_success(path, backup, backup_errno);
+
+	return ret;
 })
 
 WRAP(rename, int, (const char *old, const char *new), {
@@ -348,7 +370,7 @@ WRAP(rename, int, (const char *old, const char *new), {
 
 	// create backup link
 	if ((backup = backup_as_link(new)) == NULL) {
-		if (errno != ENOENT)
+		if (! (errno == ENOENT || errno == ENOTDIR))
 			uncolog_set_error(&ufp, errno, "unco:rename:failed to create backup link for file:%s", new);
 	}
 
@@ -357,10 +379,10 @@ WRAP(rename, int, (const char *old, const char *new), {
 
 	if (ret == 0) {
 		uncolog_write_action(&ufp, "rename", backup != NULL ? 3 : 2);
-		uncolog_write_argfn(&ufp, old);
-		uncolog_write_argfn(&ufp, new);
+		uncolog_write_argfn(&ufp, old, 0);
+		uncolog_write_argfn(&ufp, new, 0);
 		if (backup != NULL)
-			uncolog_write_argfn(&ufp, backup);
+			uncolog_write_argfn(&ufp, backup, 0);
 	}
 	free(backup);
 	return ret;
@@ -382,8 +404,8 @@ WRAP(unlink, int, (const char *path), {
 		// log the link
 		if (backup != NULL) {
 			uncolog_write_action(&ufp, "unlink", 2);
-			uncolog_write_argfn(&ufp, path);
-			uncolog_write_argfn(&ufp, backup);
+			uncolog_write_argfn(&ufp, path, 0);
+			uncolog_write_argfn(&ufp, backup, 0);
 		} else if (backup_errno != 0) {
 			uncolog_set_error(&ufp, backup_errno, "unco:unlink:failed to create backup link of:%s", path);
 		}
@@ -401,8 +423,8 @@ WRAP(link, int, (const char *path1, const char *path2), {
 	if (ret == 0) {
 		// log the action
 		uncolog_write_action(&ufp, "link", 2);
-		uncolog_write_argfn(&ufp, path1);
-		uncolog_write_argfn(&ufp, path2);
+		uncolog_write_argfn(&ufp, path1, 1);
+		uncolog_write_argfn(&ufp, path2, 1);
 	}
 	return ret;
 })

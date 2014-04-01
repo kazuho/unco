@@ -41,6 +41,16 @@ void *klist_insert(klist *l, const void *before, const void *data, size_t sz);
 char *klist_insert_printf(klist *l, const void *before, const char *fmt, ...);
 void klist_erase(klist *l, const void *cur);
 
+typedef struct kstrbuf {
+	char *str;
+	size_t len;
+	size_t capacity;
+} kstrbuf;
+
+void kstrbuf_clear(kstrbuf *sbuf);
+char *kstrbuf_append_str(kstrbuf *sbuf, const char *str);
+char *kstrbuf_append_char(kstrbuf *sbuf, int ch);
+
 char *ksprintf(const char *fmt, ...);
 char *kshellquote(const char *raw);
 char *kdirname(const char *path);
@@ -49,6 +59,7 @@ ssize_t kread_nosig(int fd, void *data, size_t len);
 void *kread_full(int fd, size_t *len);
 int kwrite_full(int fd, const void *data, size_t len);
 int kcopyfd(int srcfd, int dstfd);
+int kunlink_recursive(const char *path);
 
 #define KFREE_PTRS_INIT(n) \
 	void *_kfree_ptrs[n]; \

@@ -21,8 +21,11 @@
  * OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN
  * THE SOFTWARE.
  */
+#include <dirent.h>
 #include <errno.h>
 #include <stdlib.h>
+#include <string.h>
+#include <sys/stat.h>
 #include <unistd.h>
 #include "kazutils.h"
 
@@ -99,4 +102,45 @@ int kcopyfd(int srcfd, int dstfd)
 	}
 
 	return rret;
+}
+
+int kunlink_recursive(const char *path)
+{
+	struct stat st;
+	DIR *dp;
+	struct dirent *ent, entbuf;
+	char *fnbuf = NULL;
+	int ret = -1;
+
+	if (lstat(path, &st) != 0)
+		return -1;
+	if ((st.st_mode & S_IFMT) != S_IFDIR)
+		return unlink(path);
+
+	// rm -rf
+	if ((dp = opendir(path)) == NULL)
+		return -1;
+	while (readdir_r(dp, &entbuf, &ent) == 0 && ent != NULL) {
+		if (strcmp(ent->d_name, ".") == 0 || strcmp(ent->d_name, "..") == 0) {
+			// skip
+		} else {
+			if ((fnbuf = ksprintf("%s/%s", path, ent->d_name)) == NULL)
+				goto Exit;
+			if (kunlink_recursive(fnbuf) != 0)
+				goto Exit;
+			free(fnbuf);
+			fnbuf = NULL;
+		}
+	}
+	closedir(dp);
+	dp = NULL;
+	if (rmdir(path) != 0)
+		goto Exit;
+
+	ret = 0;
+Exit:
+	if (dp != NULL)
+		closedir(dp);
+	free(fnbuf);
+	return ret;
 }

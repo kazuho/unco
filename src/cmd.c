@@ -58,6 +58,7 @@ enum {
 	ACTION_RENAME,
 	ACTION_UNLINK,
 	ACTION_LINK,
+	ACTION_SYMLINK,
 	ACTION_FINALIZE_FILEHASH,
 	ACTION_FINALIZE_FILEREMOVE,
 	ACTION_FINALIZE,
@@ -94,6 +95,9 @@ struct action {
 			char *path1;
 			char *path2;
 		} link;
+		struct {
+			char *path2;
+		} symlink;
 		struct {
 			char *path;
 			char *sha1hex;
@@ -197,6 +201,10 @@ static int consume_log(const char *logpath, int (*cb)(struct action *action, voi
 			action.type = ACTION_LINK;
 			READ_ARGSTR(action.link.path1);
 			READ_ARGSTR(action.link.path2);
+		} else if (strcmp(name, "symlink") == 0) {
+			assert(action.argc == 1);
+			action.type = ACTION_SYMLINK;
+			READ_ARGSTR(action.symlink.path2);
 		} else if (strcmp(name, "finalize_filehash") == 0) {
 			assert(action.argc == 2);
 			action.type = ACTION_FINALIZE_FILEHASH;
@@ -346,6 +354,10 @@ static int _finalize_action_handler(struct action *action, void *cb_arg)
 		break;
 	case ACTION_LINK:
 		if (_finalize_mark_file(info, action->link.path2, 1) != 0)
+			return -1;
+		break;
+	case ACTION_SYMLINK:
+		if (_finalize_mark_file(info, action->symlink.path2, 1) != 0)
 			return -1;
 		break;
 	case ACTION_FINALIZE_FILEHASH:
@@ -657,6 +669,21 @@ static int _revert_action_handler(struct action *action, void *cb_arg)
 				goto Exit;
 			if (klist_insert_printf(&info->lines, klist_next(&info->lines, NULL),
 				"# revert link\n"
+				"rm %s || exit 1\n",
+				path2_quoted) == NULL)
+				goto Exit;
+		}
+		break;
+
+	case ACTION_SYMLINK:
+
+		{
+			char *path2_quoted;
+
+			if (KFREE_PTRS_PUSH(path2_quoted = kshellquote(action->symlink.path2)) == NULL)
+				goto Exit;
+			if (klist_insert_printf(&info->lines, klist_next(&info->lines, NULL),
+				"# revert symlink\n"
 				"rm %s || exit 1\n",
 				path2_quoted) == NULL)
 				goto Exit;

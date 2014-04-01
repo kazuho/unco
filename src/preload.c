@@ -434,3 +434,12 @@ WRAP(link, int, (const char *path1, const char *path2), {
 	}
 	return ret;
 })
+
+WRAP(symlink, int, (const char *path1, const char*path2), {
+	int ret = orig(path1, path2);
+	if (ret == 0) {
+		uncolog_write_action(&ufp, "symlink", 1);
+		uncolog_write_argfn(&ufp, path2, 0); // we only need the affected fn
+	}
+	return ret;
+})

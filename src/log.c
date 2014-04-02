@@ -34,7 +34,7 @@
 #include "kazutils.h"
 #include "unco.h"
 
-static int errorclose(struct uncolog_fp *ufp)
+static void errorclose(struct uncolog_fp *ufp)
 {
 	if (ufp->_fd != -1) {
 		close(ufp->_fd);
@@ -42,19 +42,16 @@ static int errorclose(struct uncolog_fp *ufp)
 		free(ufp->_path);
 		ufp->_path = NULL;
 	}
-	return -1;
 }
 
-static int safewrite(struct uncolog_fp *ufp, const void *data, size_t len)
+static void safewrite(struct uncolog_fp *ufp, const void *data, size_t len)
 {
-	if (ufp->_fd == -1) {
-		return -1;
-	}
+	if (ufp->_fd == -1)
+		return;
 	if (kwrite_full(ufp->_fd, data, len) != 0) {
 		perror("unco:log_write_error");
-		return errorclose(ufp);
+		errorclose(ufp);
 	}
-	return 0;
 }
 
 static int read_short_line(struct uncolog_fp *ufp, char *buf, size_t sz)
@@ -69,7 +66,8 @@ static int read_short_line(struct uncolog_fp *ufp, char *buf, size_t sz)
 	rlen = kread_nosig(ufp->_fd, buf, sz - 1);
 	if (rlen == -1) {
 		perror("unco:failed to read log");
-		return errorclose(ufp);
+		errorclose(ufp);
+		return -1;
 	} else if (rlen == 0) {
 		// eof
 		buf[0] = '\0';
@@ -80,14 +78,16 @@ static int read_short_line(struct uncolog_fp *ufp, char *buf, size_t sz)
 	// find LF and replace to NIL
 	if ((lf = strchr(buf, '\n')) == NULL) {
 		fprintf(stderr, "unexpected input:%s\n", buf);
-		return errorclose(ufp);
+		errorclose(ufp);
+		return -1;
 	}
 	*lf = '\0';
 
 	// seek to the beginning of next line
 	if (lseek(ufp->_fd, lf + 1 - buf - rlen, SEEK_CUR) == -1) {
 		perror("unco:seek failed");
-		return errorclose(ufp);
+		errorclose(ufp);
+		return -1;
 	}
 
 	return 0;
@@ -98,6 +98,7 @@ void uncolog_init_fp(struct uncolog_fp *ufp)
 	ufp->_fd = -1;
 	ufp->_default_open = NULL;
 	ufp->_path = NULL;
+	ufp->_in_action = 0;
 }
 
 void uncolog_set_error(struct uncolog_fp *ufp, int errnum, const char *fmt, ...)
@@ -195,16 +196,33 @@ int uncolog_get_fd(struct uncolog_fp *ufp)
 	return ufp->_fd;
 }
 
-int uncolog_write_action(struct uncolog_fp *ufp, const char *action, int argc)
+void uncolog_write_action_start(struct uncolog_fp *ufp, const char *action, int argc)
 {
 	char buf[32];
 
-	if (safewrite(ufp, action, strlen(action)) != 0)
-		return -1;
+	assert(! ufp->_in_action);
+	ufp->_in_action = 1;
+
+	if (ufp->_fd == -1)
+		return;
+
+	if (flock(ufp->_fd, LOCK_EX) != 0) {
+		uncolog_set_error(ufp, errno, "unco:failed to lock unco log");
+		return;
+	}
+
+	safewrite(ufp, action, strlen(action));
 	snprintf(buf, sizeof(buf), ":%d\n", argc);
-	if (safewrite(ufp, buf, strlen(buf)) != 0)
-		return -1;
-	return 0;
+	safewrite(ufp, buf, strlen(buf));
+}
+
+void uncolog_write_action_end(struct uncolog_fp *ufp)
+{
+	assert(ufp->_in_action);
+
+	if (ufp->_fd != -1)
+		flock(ufp->_fd, LOCK_UN);
+	ufp->_in_action = 0;
 }
 
 int uncolog_read_action(struct uncolog_fp *ufp, char *action, int *argc)
@@ -220,19 +238,20 @@ int uncolog_read_action(struct uncolog_fp *ufp, char *action, int *argc)
 	if ((colon = strchr(buf, ':')) == NULL
 		|| sscanf(colon + 1, "%d", argc) != 1) {
 		fprintf(stderr, "unexpected log line:%s\n", buf);
-		return errorclose(ufp);
+		errorclose(ufp);
+		return -1;
 	}
 	*colon = '\0';
 	strcpy(action, buf);
 	return 0;
 }
 
-int uncolog_write_argn(struct uncolog_fp *ufp, off_t n)
+void uncolog_write_argn(struct uncolog_fp *ufp, off_t n)
 {
 	char buf[32];
 
 	snprintf(buf, sizeof(buf), "%lld\n", n);
-	return safewrite(ufp, buf, strlen(buf));
+	safewrite(ufp, buf, strlen(buf));
 }
 
 int uncolog_read_argn(struct uncolog_fp *ufp, off_t *n)
@@ -243,18 +262,17 @@ int uncolog_read_argn(struct uncolog_fp *ufp, off_t *n)
 		return -1;
 	if (sscanf(buf, "%lld", n) != 1) {
 		fprintf(stderr, "unexpected log line:%s\n", buf);
-		return errorclose(ufp);
+		errorclose(ufp);
+		return -1;
 	}
 	return 0;
 }
 
-int uncolog_write_argbuf(struct uncolog_fp *ufp, const void *data, size_t len)
+void uncolog_write_argbuf(struct uncolog_fp *ufp, const void *data, size_t len)
 {
-	if (uncolog_write_argn(ufp, len) != 0
-		|| safewrite(ufp, data ,len) != 0
-		|| safewrite(ufp, "\n", 1) != 0)
-		return -1;
-	return 0;
+	uncolog_write_argn(ufp, len);
+	safewrite(ufp, data ,len);
+	safewrite(ufp, "\n", 1);
 }
 
 void *uncolog_read_argbuf(struct uncolog_fp *ufp, size_t *outlen)
@@ -302,14 +320,13 @@ Error:
 	return NULL;
 }
 
-int uncolog_write_argfn(struct uncolog_fp *ufp, const char *path, int resolve_file)
+void uncolog_write_argfn(struct uncolog_fp *ufp, const char *path, int resolve_file)
 {
 	char *abspath = NULL, *dirname = NULL, *real_dirname = NULL;
 	const char *basename;
-	int ret = -1;
 
 	if (ufp->_fd == -1)
-		return -1;
+		return;
 
 	if (resolve_file) {
 		if ((abspath = realpath(path, NULL)) == NULL) {
@@ -338,30 +355,27 @@ int uncolog_write_argfn(struct uncolog_fp *ufp, const char *path, int resolve_fi
 		}
 	}
 
-	if (uncolog_write_argbuf(ufp, abspath, strlen(abspath)) != 0)
-		goto Exit;
+	uncolog_write_argbuf(ufp, abspath, strlen(abspath));
 
-	ret = 0;
 Exit:
 	free(abspath);
 	free(dirname);
 	free(real_dirname);
-	return ret;
 }
 
-int uncolog_write_argfd(struct uncolog_fp *ufp, int fd)
+void uncolog_write_argfd(struct uncolog_fp *ufp, int fd)
 {
 	char path[PATH_MAX];
 
 	if (ufp->_fd == -1)
-		return -1;
+		return;
 
 	if (fcntl(fd, F_GETPATH, path) == -1) {
 		uncolog_set_error(ufp, errno, "unco:failed to obtain path of file descriptor:%d", fd);
-		return -1;
+		return;
 	}
 
-	return uncolog_write_argbuf(ufp, path, strlen(path));
+	uncolog_write_argbuf(ufp, path, strlen(path));
 }
 
 char *uncolog_get_linkname(struct uncolog_fp *ufp)

@@ -114,7 +114,7 @@ static void log_meta(void)
 	char cmdbuf[4096], **argv, *cwd;
 	int i, argc;
 
-	uncolog_write_action(&ufp, "meta", 4);
+	uncolog_write_action_start(&ufp, "meta", 4);
 
 	// log argv
 	argc = *_NSGetArgc();
@@ -136,6 +136,8 @@ static void log_meta(void)
 
 	// log ppid
 	uncolog_write_argn(&ufp, getppid());
+
+	uncolog_write_action_end(&ufp);
 }
 
 static int set_uncolog_osx(const char *logfn)
@@ -341,13 +343,15 @@ Exit:
 static void on_writeopen_success(const char *path, char *backup, int backup_errno)
 {
 	if (backup != NULL) {
-		uncolog_write_action(&ufp, "overwrite", 2);
+		uncolog_write_action_start(&ufp, "overwrite", 2);
 		uncolog_write_argfn(&ufp, path, 1);
 		uncolog_write_argfn(&ufp, backup, 0);
+		uncolog_write_action_end(&ufp);
 		free(backup);
 	} else if (backup_errno == ENOENT) {
-		uncolog_write_action(&ufp, "create", 1);
+		uncolog_write_action_start(&ufp, "create", 1);
 		uncolog_write_argfn(&ufp, path, 1);
+		uncolog_write_action_end(&ufp);
 	} else if (backup_errno != 0) {
 		uncolog_set_error(&ufp, backup_errno, "failed to create backup of file:%s", path);
 	}
@@ -429,11 +433,12 @@ WRAP(rename, int, (const char *old, const char *new), {
 	ret = orig(old, new);
 
 	if (ret == 0) {
-		uncolog_write_action(&ufp, "rename", backup != NULL ? 3 : 2);
+		uncolog_write_action_start(&ufp, "rename", backup != NULL ? 3 : 2);
 		uncolog_write_argfn(&ufp, old, 0);
 		uncolog_write_argfn(&ufp, new, 0);
 		if (backup != NULL)
 			uncolog_write_argfn(&ufp, backup, 0);
+		uncolog_write_action_end(&ufp);
 	}
 	free(backup);
 	return ret;
@@ -454,9 +459,10 @@ WRAP(unlink, int, (const char *path), {
 	if (ret == 0) {
 		// log the link
 		if (backup != NULL) {
-			uncolog_write_action(&ufp, "unlink", 2);
+			uncolog_write_action_start(&ufp, "unlink", 2);
 			uncolog_write_argfn(&ufp, path, 0);
 			uncolog_write_argfn(&ufp, backup, 0);
+			uncolog_write_action_end(&ufp);
 		} else if (backup_errno != 0) {
 			uncolog_set_error(&ufp, backup_errno, "unco:unlink:failed to create backup link of:%s", path);
 		}
@@ -473,9 +479,10 @@ WRAP(link, int, (const char *path1, const char *path2), {
 	int ret = orig(path1, path2);
 	if (ret == 0) {
 		// log the action
-		uncolog_write_action(&ufp, "link", 2);
+		uncolog_write_action_start(&ufp, "link", 2);
 		uncolog_write_argfn(&ufp, path1, 1);
 		uncolog_write_argfn(&ufp, path2, 1);
+		uncolog_write_action_end(&ufp);
 	}
 	return ret;
 })
@@ -483,8 +490,9 @@ WRAP(link, int, (const char *path1, const char *path2), {
 WRAP(symlink, int, (const char *path1, const char*path2), {
 	int ret = orig(path1, path2);
 	if (ret == 0) {
-		uncolog_write_action(&ufp, "symlink", 1);
+		uncolog_write_action_start(&ufp, "symlink", 1);
 		uncolog_write_argfn(&ufp, path2, 0); // we only need the affected fn
+		uncolog_write_action_end(&ufp);
 	}
 	return ret;
 })
@@ -495,8 +503,9 @@ WRAP(mkstemp, int, (char *template), {
 	ret = orig(template);
 
 	if (ret != -1) {
-		uncolog_write_action(&ufp, "create", 1);
+		uncolog_write_action_start(&ufp, "create", 1);
 		uncolog_write_argfn(&ufp, template, 1);
+		uncolog_write_action_end(&ufp);
 	}
 	return ret;
 })
@@ -508,9 +517,10 @@ WRAP(mkdir, int, (const char *path, mode_t mode), {
 	ret = orig(path, mode);
 
 	if (ret == 0) {
-		uncolog_write_action(&ufp, "mkdir", 1);
 		if ((path_normalized = strip_trailing_slashes(path)) != NULL) {
+			uncolog_write_action_start(&ufp, "mkdir", 1);
 			uncolog_write_argfn(&ufp, path_normalized, 0);
+			uncolog_write_action_end(&ufp);
 			free(path_normalized);
 		} else {
 			uncolog_set_error(&ufp, errno, "unco");
@@ -535,9 +545,10 @@ WRAP(rmdir, int, (const char *path), {
 
 	if (ret == 0) {
 		if (backup != NULL) {
-			uncolog_write_action(&ufp, "rmdir", 2);
+			uncolog_write_action_start(&ufp, "rmdir", 2);
 			uncolog_write_argfn(&ufp, path_normalized, 0);
 			uncolog_write_argfn(&ufp, backup, 1);
+			uncolog_write_action_end(&ufp);
 		} else {
 			uncolog_set_error(&ufp, backup_errno, "unco:failed to create backup file of:%s", path_normalized);
 		}
@@ -562,9 +573,10 @@ WRAP(chmod, int, (const char *path, mode_t mode), {
 	ret = orig(path, mode);
 
 	if (ret == 0) {
-		uncolog_write_action(&ufp, "chmod", 2);
+		uncolog_write_action_start(&ufp, "chmod", 2);
 		uncolog_write_argfn(&ufp, path, 1);
 		uncolog_write_argn(&ufp, st.st_mode & ~S_IFMT);
+		uncolog_write_action_end(&ufp);
 	} else {
 		uncolog_set_error(&ufp, stat_errno, "failed to stat file:%s", path);
 	}
@@ -583,9 +595,10 @@ WRAP(fchmod, int, (int filedes, mode_t mode), {
 	ret = orig(filedes, mode);
 
 	if (ret == 0) {
-		uncolog_write_action(&ufp, "chmod", 2);
+		uncolog_write_action_start(&ufp, "chmod", 2);
 		uncolog_write_argfd(&ufp, filedes);
 		uncolog_write_argn(&ufp, st.st_mode & ~S_IFMT);
+		uncolog_write_action_end(&ufp);
 	} else {
 		uncolog_set_error(&ufp, stat_errno, "failed to stat file descriptor:%d", filedes);
 	}
@@ -604,10 +617,11 @@ WRAP(chown, int, (const char *path, uid_t owner, gid_t group), {
 	ret = orig(path, owner, group);
 
 	if (ret == 0) {
-		uncolog_write_action(&ufp, "lchown", 3);
+		uncolog_write_action_start(&ufp, "lchown", 3);
 		uncolog_write_argfn(&ufp, path, 1);
 		uncolog_write_argn(&ufp, st.st_uid);
 		uncolog_write_argn(&ufp, st.st_gid);
+		uncolog_write_action_end(&ufp);
 	} else {
 		uncolog_set_error(&ufp, stat_errno, "failed to stat file:%s", path);
 	}
@@ -626,10 +640,11 @@ WRAP(lchown, int, (const char *path, uid_t owner, gid_t group), {
 	ret = orig(path, owner, group);
 
 	if (ret == 0) {
-		uncolog_write_action(&ufp, "lchown", 3);
+		uncolog_write_action_start(&ufp, "lchown", 3);
 		uncolog_write_argfn(&ufp, path, 0);
 		uncolog_write_argn(&ufp, st.st_uid);
 		uncolog_write_argn(&ufp, st.st_gid);
+		uncolog_write_action_end(&ufp);
 	} else {
 		uncolog_set_error(&ufp, stat_errno, "failed to stat file:%s", path);
 	}
@@ -648,10 +663,11 @@ WRAP(fchown, int, (int filedes, uid_t owner, gid_t group), {
 	ret = orig(filedes, owner, group);
 
 	if (ret == 0) {
-		uncolog_write_action(&ufp, "lchown", 3);
+		uncolog_write_action_start(&ufp, "lchown", 3);
 		uncolog_write_argfd(&ufp, filedes);
 		uncolog_write_argn(&ufp, st.st_uid);
 		uncolog_write_argn(&ufp, st.st_gid);
+		uncolog_write_action_end(&ufp);
 	} else {
 		uncolog_set_error(&ufp, stat_errno, "failed to stat file descriptor:%d", filedes);
 	}

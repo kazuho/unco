@@ -460,20 +460,22 @@ static int _finalize_append_action_dir(struct uncolog_fp *ufp, const char *dir, 
 					// TODO collect appropriate hash depending on the file type
 					sha1hex[0] = '\0';
 				}
-				if (uncolog_write_action(ufp, "finalize_filehash", 2) != 0
-					|| uncolog_write_argbuf(ufp, fn, strlen(fn)) != 0
-					|| uncolog_write_argbuf(ufp, sha1hex, strlen(sha1hex)) != 0)
-					goto Exit;
+				uncolog_write_action_start(ufp, "finalize_filehash", 2);
+				uncolog_write_argbuf(ufp, fn, strlen(fn));
+				uncolog_write_argbuf(ufp, sha1hex, strlen(sha1hex));
+				uncolog_write_action_end(ufp);
 			} else {
 				// file should not exist
 				if (lstat(fn, &st) == 0) {
 					uncolog_set_error(ufp, 0, "unexpected condition, file logged as being removed exists:%s", fn);
 					goto Exit;
 				}
-				if (uncolog_write_action(ufp, "finalize_fileremove", 1) != 0
-					|| uncolog_write_argbuf(ufp, fn, strlen(fn)) != 0)
-					goto Exit;
+				uncolog_write_action_start(ufp, "finalize_fileremove", 1);
+				uncolog_write_argbuf(ufp, fn, strlen(fn));
+				uncolog_write_action_end(ufp);
 			}
+			if (uncolog_get_fd(ufp) == -1) // error!
+				goto Exit;
 
 			free(fn);
 			fn = NULL;
@@ -495,7 +497,10 @@ static int _finalize_append_action(struct uncolog_fp* ufp, struct _finalize_info
 	if (_finalize_append_action_dir(ufp, info->removed_files_dir, 0) != 0)
 		return -1;
 
-	if (uncolog_write_action(ufp, "finalize", 0) != 0)
+	uncolog_write_action_start(ufp, "finalize", 0);
+	uncolog_write_action_end(ufp);
+
+	if (uncolog_get_fd(ufp) == -1) // error
 		return -1;
 
 	return 0;

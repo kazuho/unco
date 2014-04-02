@@ -20,7 +20,7 @@ Running
 To record a command:
 
 ```
-% unco record cmd args...
+% unco record -- cmd args...
 ```
 
 To display the list of commands being recorded:

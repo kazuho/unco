@@ -711,7 +711,6 @@ static int _revert_action_handler(struct action *action, void *cb_arg)
 		break;
 
 	case ACTION_SYMLINK:
-
 		{
 			char *path2_quoted;
 
@@ -726,7 +725,6 @@ static int _revert_action_handler(struct action *action, void *cb_arg)
 		break;
 
 	case ACTION_MKDIR:
-
 		{
 			char *path_quoted;
 
@@ -741,7 +739,6 @@ static int _revert_action_handler(struct action *action, void *cb_arg)
 		break;
 
 	case ACTION_RMDIR:
-
 		{
 			char *path_quoted;
 			struct stat st;

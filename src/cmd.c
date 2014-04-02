@@ -61,6 +61,8 @@ enum {
 	ACTION_SYMLINK,
 	ACTION_MKDIR,
 	ACTION_RMDIR,
+	ACTION_CHMOD,
+	ACTION_LCHOWN,
 	ACTION_FINALIZE_FILEHASH,
 	ACTION_FINALIZE_FILEREMOVE,
 	ACTION_FINALIZE,
@@ -107,6 +109,15 @@ struct action {
 			char *path;
 			char *backup;
 		} rmdir;
+		struct {
+			char *path;
+			mode_t prev_mode;
+		} chmod;
+		struct {
+			char *path;
+			uid_t prev_owner;
+			uid_t prev_group;
+		} lchown;
 		struct {
 			char *path;
 			char *sha1hex;
@@ -223,6 +234,11 @@ static int consume_log(const char *logpath, int (*cb)(struct action *action, voi
 			action.type = ACTION_RMDIR;
 			READ_ARGSTR(action.rmdir.path);
 			READ_ARGSTR(action.rmdir.backup);
+		} else if (strcmp(name, "chmod") == 0) {
+			assert(action.argc == 2);
+			action.type = ACTION_CHMOD;
+			READ_ARGSTR(action.chmod.path);
+			READ_ARGN(action.chmod.prev_mode);
 		} else if (strcmp(name, "finalize_filehash") == 0) {
 			assert(action.argc == 2);
 			action.type = ACTION_FINALIZE_FILEHASH;
@@ -384,6 +400,14 @@ static int _finalize_action_handler(struct action *action, void *cb_arg)
 		break;
 	case ACTION_RMDIR:
 		if (_finalize_mark_file(info, action->rmdir.path, 0) != 0)
+			return -1;
+		break;
+	case ACTION_CHMOD:
+		if (_finalize_mark_file(info, action->chmod.path, 1) != 0)
+			return -1;
+		break;
+	case ACTION_LCHOWN:
+		if (_finalize_mark_file(info, action->lchown.path, 1) != 0)
 			return -1;
 		break;
 	case ACTION_FINALIZE_FILEHASH:
@@ -755,6 +779,34 @@ static int _revert_action_handler(struct action *action, void *cb_arg)
 				"chown %d:%d %s || exit 1\n"
 				"chmod %o %s || exit 1\n",
 				path_quoted, st.st_uid, st.st_gid, path_quoted, st.st_mode & ~S_IFMT, path_quoted) == NULL)
+				goto Exit;
+		}
+		break;
+
+	case ACTION_CHMOD:
+		{
+			char *path_quoted;
+
+			if (KFREE_PTRS_PUSH(path_quoted = kshellquote(action->chmod.path)) == NULL)
+				goto Exit;
+			if (klist_insert_printf(&info->lines, klist_next(&info->lines, NULL),
+				"# revert chmod\n"
+				"chmod %o %s || exit 1\n",
+				action->chmod.prev_mode, path_quoted) == NULL)
+				goto Exit;
+		}
+		break;
+
+	case ACTION_LCHOWN:
+		{
+			char *path_quoted;
+
+			if (KFREE_PTRS_PUSH(path_quoted = kshellquote(action->lchown.path)) == NULL)
+				goto Exit;
+			if (klist_insert_printf(&info->lines, klist_next(&info->lines, NULL),
+				"# revert chown\n"
+				"chown -h %d:%d %s || exit 1\n",
+				action->lchown.prev_owner, action->lchown.prev_group, path_quoted) == NULL)
 				goto Exit;
 		}
 		break;

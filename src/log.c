@@ -349,6 +349,21 @@ Exit:
 	return ret;
 }
 
+int uncolog_write_argfd(struct uncolog_fp *ufp, int fd)
+{
+	char path[PATH_MAX];
+
+	if (ufp->_fd == -1)
+		return -1;
+
+	if (fcntl(fd, F_GETPATH, path) == -1) {
+		uncolog_set_error(ufp, errno, "unco:failed to obtain path of file descriptor:%d", fd);
+		return -1;
+	}
+
+	return uncolog_write_argbuf(ufp, path, strlen(path));
+}
+
 char *uncolog_get_linkname(struct uncolog_fp *ufp)
 {
 	char *link;

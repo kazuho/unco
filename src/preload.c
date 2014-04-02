@@ -44,6 +44,7 @@ static int (*default_link)(const char *path1, const char *path2);
 static int (*default_symlink)(const char *path1, const char *path2);
 static int (*default_unlink)(const char *path);
 static int (*default_rmdir)(const char *path);
+static int (*default_chown)(const char *path, uid_t owner, gid_t group);
 
 static struct uncolog_fp ufp;
 
@@ -177,6 +178,7 @@ extern void _setup_unco_preload()
 	default_symlink = (int (*)(const char *, const char *))dlsym(RTLD_NEXT, "symlink");
 	default_unlink = (int (*)(const char *))dlsym(RTLD_NEXT, "unlink");
 	default_rmdir = (int (*)(const char *))dlsym(RTLD_NEXT, "rmdir");
+	default_chown = (int (*)(const char *, uid_t, gid_t))dlsym(RTLD_NEXT, "chown");
 
 	// determine the filename
 	if ((env = getenv("UNCO_LOG")) != NULL) {
@@ -277,7 +279,7 @@ static char *backup_as_dir(const char *path, int *errnum)
 	if ((backup = uncolog_get_linkname(&ufp)) == NULL)
 		return NULL;
 	if (default_mkdir(backup, st.st_mode & ~S_IFMT) != 0
-		|| chown(backup, st.st_uid, st.st_gid) != 0)
+		|| default_chown(backup, st.st_uid, st.st_gid) != 0)
 		goto Exit;
 
 	success = 1;
@@ -546,5 +548,113 @@ WRAP(rmdir, int, (const char *path), {
 
 	free(path_normalized);
 	free(backup);
+	return ret;
+})
+
+WRAP(chmod, int, (const char *path, mode_t mode), {
+	struct stat st;
+	int ret;
+	int stat_errno = 0;
+
+	if (stat(path, &st) != 0)
+		stat_errno = errno;
+
+	ret = orig(path, mode);
+
+	if (ret == 0) {
+		uncolog_write_action(&ufp, "chmod", 2);
+		uncolog_write_argfn(&ufp, path, 1);
+		uncolog_write_argn(&ufp, st.st_mode & ~S_IFMT);
+	} else {
+		uncolog_set_error(&ufp, stat_errno, "failed to stat file:%s", path);
+	}
+
+	return ret;
+})
+
+WRAP(fchmod, int, (int filedes, mode_t mode), {
+	struct stat st;
+	int ret;
+	int stat_errno = 0;
+
+	if (fstat(filedes, &st) != 0)
+		stat_errno = errno;
+
+	ret = orig(filedes, mode);
+
+	if (ret == 0) {
+		uncolog_write_action(&ufp, "chmod", 2);
+		uncolog_write_argfd(&ufp, filedes);
+		uncolog_write_argn(&ufp, st.st_mode & ~S_IFMT);
+	} else {
+		uncolog_set_error(&ufp, stat_errno, "failed to stat file descriptor:%d", filedes);
+	}
+
+	return ret;
+})
+
+WRAP(chown, int, (const char *path, uid_t owner, gid_t group), {
+	struct stat st;
+	int ret;
+	int stat_errno = 0;
+
+	if (stat(path, &st) != 0)
+		stat_errno = errno;
+
+	ret = orig(path, owner, group);
+
+	if (ret == 0) {
+		uncolog_write_action(&ufp, "lchown", 3);
+		uncolog_write_argfn(&ufp, path, 1);
+		uncolog_write_argn(&ufp, st.st_uid);
+		uncolog_write_argn(&ufp, st.st_gid);
+	} else {
+		uncolog_set_error(&ufp, stat_errno, "failed to stat file:%s", path);
+	}
+
+	return ret;
+})
+
+WRAP(lchown, int, (const char *path, uid_t owner, gid_t group), {
+	struct stat st;
+	int ret;
+	int stat_errno = 0;
+
+	if (lstat(path, &st) != 0)
+		stat_errno = errno;
+
+	ret = orig(path, owner, group);
+
+	if (ret == 0) {
+		uncolog_write_action(&ufp, "lchown", 3);
+		uncolog_write_argfn(&ufp, path, 0);
+		uncolog_write_argn(&ufp, st.st_uid);
+		uncolog_write_argn(&ufp, st.st_gid);
+	} else {
+		uncolog_set_error(&ufp, stat_errno, "failed to stat file:%s", path);
+	}
+
+	return ret;
+})
+
+WRAP(fchown, int, (int filedes, uid_t owner, gid_t group), {
+	struct stat st;
+	int ret;
+	int stat_errno = 0;
+
+	if (fstat(filedes, &st) != 0)
+		stat_errno = errno;
+
+	ret = orig(filedes, owner, group);
+
+	if (ret == 0) {
+		uncolog_write_action(&ufp, "lchown", 3);
+		uncolog_write_argfd(&ufp, filedes);
+		uncolog_write_argn(&ufp, st.st_uid);
+		uncolog_write_argn(&ufp, st.st_gid);
+	} else {
+		uncolog_set_error(&ufp, stat_errno, "failed to stat file descriptor:%d", filedes);
+	}
+
 	return ret;
 })

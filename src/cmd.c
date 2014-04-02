@@ -168,7 +168,7 @@ static int consume_log(const char *logpath, int (*cb)(struct action *action, voi
 	} while (0)
 #define READ_ARGN(dst) \
 	do { \
-		off_t t; \
+		long long t; \
 		if (uncolog_read_argn(ufp, &t) != 0) \
 			goto Exit; \
 		dst = t; \
@@ -337,7 +337,7 @@ static int _finalize_mark_file_in_list(const char *dir, const char *fn, int exis
 	if ((path = ksprintf("%s/%s", dir, fn_encoded)) == NULL)
 		goto Exit;
 
-	if (lstat(path, &st) == 0 != exists) {
+	if ((lstat(path, &st) == 0) != exists) {
 		if (exists) {
 			if (symlink(dir, path) != 0)
 				goto Exit;

@@ -21,6 +21,9 @@
  * OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN
  * THE SOFTWARE.
  */
+#ifdef __linux__
+# define _GNU_SOURCE
+#endif
 #include <dlfcn.h>
 #include <errno.h>
 #include <fcntl.h>
@@ -32,7 +35,9 @@
 #include <sys/stat.h>
 #include <sys/time.h>
 #include <unistd.h>
-#include <crt_externs.h>
+#ifdef __APPLE__
+# include <crt_externs.h>
+#endif
 #include "kazutils.h"
 #include "unco.h"
 #include "config.h"
@@ -111,20 +116,45 @@ static void spawn_finalizer()
 
 static void log_meta(void)
 {
-	char cmdbuf[4096], **argv, *cwd;
-	int i, argc;
+	char *cwd;
 
 	uncolog_write_action_start(&ufp, "meta", 4);
 
 	// log argv
-	argc = *_NSGetArgc();
-	argv = *_NSGetArgv();
-	cmdbuf[0] = '\0';
-	for (i = 0; i != argc; ++i)
-		snprintf(cmdbuf + strlen(cmdbuf), sizeof(cmdbuf) - strlen(cmdbuf),
-		i == 0 ? "%s" : " %s",
-		argv[i]);
-	uncolog_write_argbuf(&ufp, cmdbuf, strlen(cmdbuf));
+#ifdef __APPLE__
+	do {
+		char cmdbuf[4096], **argv;
+		int i, argc;
+		argc = *_NSGetArgc();
+		argv = *_NSGetArgv();
+		cmdbuf[0] = '\0';
+		for (i = 0; i != argc; ++i)
+			snprintf(cmdbuf + strlen(cmdbuf), sizeof(cmdbuf) - strlen(cmdbuf),
+			i == 0 ? "%s" : " %s",
+			argv[i]);
+		uncolog_write_argbuf(&ufp, cmdbuf, strlen(cmdbuf));
+	} while (0);
+#elif defined(__linux__)
+	do {
+		int fd;
+		char *cmd = NULL;
+		size_t cmdlen, i;
+		if ((fd = open("/proc/self/cmdline", O_RDONLY)) != -1) {
+			cmd = kread_full(fd, &cmdlen);
+			close(fd);
+		}
+		if (cmd != NULL) {
+			for (i = 0; i < cmdlen; ++i)
+				if (cmd[i] == '\0')
+					cmd[i] = ' ';
+			uncolog_write_argbuf(&ufp, cmd, cmdlen);
+		} else {
+			uncolog_write_argbuf(&ufp, "(unknown)", sizeof("(unknown)") - 1);
+		}
+	} while (0);	
+#else
+# error "unknown env"
+#endif
 
 	// log cwd
 	cwd = getcwd(NULL, 0);
@@ -142,9 +172,16 @@ static void log_meta(void)
 
 static int set_uncolog_osx(const char *logfn)
 {
-	// we need to rewrite an existing entry of environ
-	char **env = *_NSGetEnviron();
+	char **env;
 	size_t n;
+
+#ifdef __linux__
+	env = environ;
+#elif defined(__APPLE__)
+	env = *_NSGetEnviron();
+#else
+# error "unknown env"
+#endif
 
 	if (strlen(logfn) >= UNCO_LOG_PATH_MAX) {
 		fprintf(stderr, "log file name is too long:%s\n", logfn);
@@ -379,8 +416,8 @@ WRAP(open, int, (const char *path, int oflag, ...), {
 	is_write = (oflag & (O_WRONLY | O_RDWR)) != 0;
 
 	if (is_write) {
-		if ((oflag & (O_NOFOLLOW | O_SYMLINK)) != 0) {
-			uncolog_set_error(&ufp, 0, "unco:open:cannot handle open with O_NOFOLLOW|O_SYMLINK against file:%s", path);
+		if ((oflag & O_NOFOLLOW) != 0) {
+			uncolog_set_error(&ufp, 0, "unco:open:cannot handle open with O_NOFOLLOW against file:%s", path);
 			backup_errno = 0;
 		} else {
 			backup = before_writeopen(path, &backup_errno);

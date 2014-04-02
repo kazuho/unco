@@ -198,7 +198,7 @@ extern void _setup_unco_preload()
 		open_mode = 'a';
 	} else {
 		// default
-		if ((dir = unco_get_default_dir()) == NULL)
+		if ((dir = unco_get_default_dir(default_mkdir)) == NULL)
 			goto Error;
 		if ((log_index = unco_get_next_logindex(dir)) == -1)
 			goto Error;

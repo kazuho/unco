@@ -41,7 +41,7 @@ int unco_utimes(int fd, const struct stat *st, int (*futimes)(int, const struct 
 	return futimes(fd, times);
 }
 
-char *unco_get_default_dir()
+char *unco_get_default_dir(int (*default_mkdir)(const char *, mode_t))
 {
 	char *home, *dir;
 
@@ -64,7 +64,7 @@ char *unco_get_default_dir()
 	}
 
 	// mkdir
-	if (mkdir(dir, 0700) == 0 || errno == EEXIST) {
+	if (default_mkdir(dir, 0700) == 0 || errno == EEXIST) {
 		// ok
 	} else {
 		kerr_printf("failed to create dir:%s", dir);

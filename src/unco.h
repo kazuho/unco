@@ -59,7 +59,7 @@ void *uncolog_read_argbuf(struct uncolog_fp *ufp, size_t *sz);
 
 int unco_utimes(int fd, const struct stat *st, int (*futimes)(int, const struct timeval times[2]));
 
-char *unco_get_default_dir(void);
+char *unco_get_default_dir(int (*default_mkdir)(const char *, mode_t));
 long long unco_get_next_logindex(const char *dir);
 
 #ifdef __cplusplus

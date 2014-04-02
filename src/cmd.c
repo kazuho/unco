@@ -903,7 +903,7 @@ static int do_revert(int argc, char **argv, int is_redo)
 		goto Exit;
 	}
 	if (sscanf(*argv, "%d", &logindex) == 1) {
-		if (KFREE_PTRS_PUSH(unco_dir = unco_get_default_dir()) == NULL)
+		if (KFREE_PTRS_PUSH(unco_dir = unco_get_default_dir(mkdir)) == NULL)
 			goto Exit;
 		if (KFREE_PTRS_PUSH(logfn = ksprintf("%s/%s", unco_dir, *argv)) == NULL) {
 			perror("unco");
@@ -1050,7 +1050,7 @@ static int do_history(int argc, char **argv)
 	struct stat st;
 	struct history_info info;
 
-	if ((unco_dir = unco_get_default_dir()) == NULL)
+	if ((unco_dir = unco_get_default_dir(mkdir)) == NULL)
 		return EX_OSERR;
 
 	memset(&info, 0, sizeof(info));

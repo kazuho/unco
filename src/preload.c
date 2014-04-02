@@ -105,8 +105,12 @@ static void spawn_finalizer()
 	uncolog_close(&ufp);
 
 	// unset the preload
+#ifdef __linux__
+	unsetenv("LD_PRELOAD");
+#elif defined(__APPLE__)
 	unsetenv("DYLD_INSERT_LIBRARIES");
 	unsetenv("DYLD_FORCE_FLAT_NAMESPACE");
+#endif
 
 	// exec uncolog _finalize
 	execl(WITH_BINDIR "/unco", "unco", "_finalize", NULL);

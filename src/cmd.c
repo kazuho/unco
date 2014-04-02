@@ -599,8 +599,14 @@ static int do_record(int argc, char **argv)
 	}
 
 	// set environment variables and exec
+#ifdef __linux__
+	setenv("LD_PRELOAD", WITH_LIBDIR "/libunco-preload.so", 1);
+#elif defined(__APPLE__)
 	setenv("DYLD_INSERT_LIBRARIES", WITH_LIBDIR "/libunco-preload.dylib", 1);
 	setenv("DYLD_FORCE_FLAT_NAMESPACE", "YES", 1);
+#else
+# error "unknown env"
+#endif
 	if (log_file != NULL) {
 		setenv("UNCO_LOG", log_file, 1);
 	} else {

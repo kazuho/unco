@@ -15,6 +15,10 @@ ADD_EXECUTABLE(unco src/cmd.c src/log.c src/misc.c third-party/kazutils.c/file.c
 
 CONFIGURE_FILE(src/config.h.cmake src/config.h)
 
+IF(${CMAKE_SYSTEM_NAME} MATCHES "Linux")
+	TARGET_LINK_LIBRARIES(unco-preload dl)
+ENDIF(${CMAKE_SYSTEM_NAME} MATCHES "Linux")
+
 INSTALL(TARGETS unco unco-preload
 	RUNTIME DESTINATION ${BINDIR_REL}
 	LIBRARY DESTINATION ${LIBDIR_REL})

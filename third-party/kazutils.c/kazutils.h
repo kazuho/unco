@@ -60,6 +60,9 @@ void *kread_full(int fd, size_t *len);
 int kwrite_full(int fd, const void *data, size_t len);
 int kcopyfd(int srcfd, int dstfd);
 int kunlink_recursive(const char *path);
+#if defined(__linux__) || defined(__APPLE__)
+char *kgetpath(int fd);
+#endif
 
 #define KFREE_PTRS_INIT(n) \
 	void *_kfree_ptrs[n]; \

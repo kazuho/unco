@@ -370,35 +370,17 @@ Exit:
 
 void uncolog_write_argfd(struct uncolog_fp *ufp, int fd)
 {
-	char path[PATH_MAX];
+	char *path;
 
 	if (ufp->_fd == -1)
 		return;
 
-#ifdef __linux__
-	do {
-		char *linkfn;
-		ssize_t sz;
-		if ((linkfn = ksprintf("/proc/self/%d", fd)) == NULL) {
-			uncolog_set_error(ufp, errno, "unco");
-			return;
-		}
-		sz = readlink(linkfn, path, sizeof(path) - 1);
-		free(linkfn);
-		if (sz == -1) {
-			uncolog_set_error(ufp, errno, "failed to obtain path of file descriptor from procfs:%d\n", fd);
-			return;
-		}
-		path[sz] = '\0';
-	} while (0);
-#else
-	if (fcntl(fd, F_GETPATH, path) == -1) {
-		uncolog_set_error(ufp, errno, "unco:failed to obtain path of file descriptor:%d", fd);
+	if ((path = kgetpath(fd)) == NULL) {
+		uncolog_set_error(ufp, errno, "failed to obtain path of file descriptor:%d\n", fd);
 		return;
 	}
-#endif
-
 	uncolog_write_argbuf(ufp, path, strlen(path));
+	free(path);
 }
 
 char *uncolog_get_linkname(struct uncolog_fp *ufp)

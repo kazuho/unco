@@ -628,6 +628,7 @@ static int do_record(int argc, char **argv)
 
 struct revert_info {
 	klist lines;
+	klist files_altered_since_finalization;
 	int is_finalized;
 	char *header;
 };
@@ -830,39 +831,31 @@ static int _revert_action_handler(struct action *action, void *cb_arg)
 
 	case ACTION_FINALIZE_FILEHASH:
 		{
-			char *path_quoted;
+			char sha1hex[SHA1HashSize * 2 + 1];
+			struct stat st;
+			int altered = 0;
 
 			if (action->finalize_filehash.sha1hex[0] != '\0') {
-				if (KFREE_PTRS_PUSH(path_quoted = kshellquote(action->finalize_filehash.path)) == NULL)
-					goto Exit;
-				if (klist_insert_printf(&info->lines, klist_next(&info->lines, NULL),
-						"# check that file has not been altered since the recorded change\n"
-						"SHA1HEX=`openssl sha1 < %s`\n"
-						"[ $? -eq 0 ] || exit 1\n"
-						"if [ \"$SHA1HEX\" != \"%s\" ] ; then\n"
-						"    echo 'file altered since recorded change:%s' >&2\n"
-						"    exit 1\n"
-						"fi\n",
-						path_quoted, action->finalize_filehash.sha1hex, path_quoted) == NULL)
-					goto Exit;
+				if (sha1hex_file(action->finalize_filehash.path, sha1hex) != 0
+					|| strcmp(action->finalize_filehash.sha1hex, sha1hex) != 0)
+					altered = 1;
+			} else {
+				if (lstat(action->finalize_filehash.path, &st) != 0)
+					altered = 1;
 			}
+			if (altered)
+				klist_insert(&info->files_altered_since_finalization, NULL,
+					action->finalize_filehash.path, strlen(action->finalize_filehash.path) + 1);
 		}
 		break;
 
 	case ACTION_FINALIZE_FILEREMOVE:
 		{
-			char *path_quoted;
+			struct stat st;
 
-			if (KFREE_PTRS_PUSH(path_quoted = kshellquote(action->finalize_fileremove.path)) == NULL)
-				goto Exit;
-			if (klist_insert_printf(&info->lines, klist_next(&info->lines, NULL),
-					"# check that file has not been recreated since the recorded removal\n"
-					"if [ -e %s ] ; then\n"
-					"    echo 'file recreated since recorded removal:%s' >&2\n"
-					"    exit 1\n"
-					"fi\n",
-					path_quoted, path_quoted) == NULL)
-				goto Exit;
+			if (lstat(action->finalize_fileremove.path, &st) == 0)
+				klist_insert(&info->files_altered_since_finalization, NULL,
+					action->finalize_filehash.path, strlen(action->finalize_filehash.path) + 1);
 		}
 		break;
 
@@ -890,7 +883,7 @@ static int do_revert(int argc, char **argv, int is_redo)
 		{ "print", no_argument, NULL, 'p' },
 		{ NULL }
 	};
-	char *logfn, *unco_dir, *unco_cmd_quoted, *undo_logfn, *undo_logfn_quoted, *shellcmd, *lines;
+	char *logfn, *unco_dir, *unco_cmd_quoted, *undo_logfn, *undo_logfn_quoted, *shellcmd, *lines, *altered_file;
 	int opt_ch, logindex, print = 0, exit = EX_SOFTWARE;
 	struct revert_info info;
 	struct stat st;
@@ -955,8 +948,24 @@ static int do_revert(int argc, char **argv, int is_redo)
 		goto Exit;
 	}
 
-	if (! info.is_finalized)
-		fprintf(stderr, "\n    !!! WARNING !!! the command is still running\n\n");
+	if (! info.is_finalized) {
+		fprintf(stderr, "refusing the action; undo log is still open\n");
+		exit = EX_DATAERR;
+		goto Exit;
+	}
+	if (! print && info.files_altered_since_finalization.count != 0) {
+		fprintf(stderr,
+			"refusing the action, since following files have been altered/removed/recreated since the log was being recorded\n\n");
+		for (altered_file = NULL; (altered_file = klist_next(&info.files_altered_since_finalization, altered_file)) != NULL; ) {
+			fprintf(stderr, "    %s\n", altered_file);
+		}
+		fprintf(stderr,
+			"\n"
+			"note: to enforce action, use --print option and pipe the output to sh\n"
+			"\n");
+		exit = EX_DATAERR;
+		goto Exit;
+	}
 
 	// setup output
 	if (! print) {
@@ -997,6 +1006,7 @@ static int do_revert(int argc, char **argv, int is_redo)
 			exit = EX_OSERR; // error is reported by shell
 			goto Exit;
 		}
+		printf("unco:successfully %sdid the recorded changes\n", is_redo ? "re" : "un");
 		if (is_redo) {
 			// remove undo log
 			if (kunlink_recursive(undo_logfn) != 0) {
@@ -1017,6 +1027,7 @@ Exit:
 	KFREE_PTRS();
 	free(info.header);
 	klist_clear(&info.lines);
+	klist_clear(&info.files_altered_since_finalization);
 	return exit;
 }
 

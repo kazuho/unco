@@ -335,6 +335,27 @@ Exit:
 	return backup;
 }
 
+#ifdef __linux__
+static char *normalize_atpath(int dirfd, const char *path)
+{
+	char *ret, *dirpath;
+
+	if (path[0] == '/' || dirfd == AT_FDCWD) {
+		if ((ret = strdup(path)) == NULL)
+			uncolog_set_error(&ufp, errno, "unco");
+		return ret;
+	}
+	if ((dirpath = kgetpath(dirfd)) == NULL) {
+		uncolog_set_error(&ufp, 0, "unco:failed to determine path of filedes:%d", dirfd);
+		return NULL;
+	}
+	if ((ret = ksprintf("%s/%s", dirpath, path)) == NULL)
+		uncolog_set_error(&ufp, errno, "unco");
+	free(dirpath);
+	return ret;
+}
+#endif
+
 static char *before_writeopen(const char *path, int *errnum)
 {
 	char *backup = NULL;
@@ -550,15 +571,19 @@ WRAP(unlink, int, (const char *path), {
 
 #ifdef __linux__
 WRAP(unlinkat, int, (int dirfd, const char *path, int flags), {
-	if (dirfd != AT_FDCWD) {
-		uncolog_set_error(&ufp, 0, "unco:unsupported operation: unlinkat(! AT_CWD) against file:%s", path);
+	char *path_normalized;
+	int ret;
+
+	if ((path_normalized = normalize_atpath(dirfd, path)) == NULL)
 		return orig(dirfd, path, flags);
-	}
 
 	if ((flags & AT_REMOVEDIR) != 0)
-		return rmdir(path);
+		ret = rmdir(path_normalized);
 	else
-		return unlink(path);
+		ret = unlink(path_normalized);
+
+	free(path_normalized);
+	return ret;
 })
 #endif
 

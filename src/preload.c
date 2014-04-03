@@ -23,6 +23,7 @@
  */
 #ifdef __linux__
 # define _GNU_SOURCE
+# define _ATFILE_SOURCE
 #endif
 #include <dlfcn.h>
 #include <errno.h>
@@ -409,7 +410,7 @@ static int do_open(int (*orig)(const char *path, int oflag, ...), const char *pa
 
 	if (is_write) {
 		if ((oflag & O_NOFOLLOW) != 0) {
-			uncolog_set_error(&ufp, 0, "unco:open:cannot handle open with O_NOFOLLOW against file:%s", path);
+			uncolog_set_error(&ufp, 0, "unco:unsupported operation: open with O_NOFOLLOW against file:%s", path);
 			backup_errno = 0;
 		} else {
 			backup = before_writeopen(path, &backup_errno);
@@ -546,6 +547,20 @@ WRAP(unlink, int, (const char *path), {
 	free(backup);
 	return ret;
 })
+
+#ifdef __linux__
+WRAP(unlinkat, int, (int dirfd, const char *path, int flags), {
+	if (dirfd != AT_FDCWD) {
+		uncolog_set_error(&ufp, 0, "unco:unsupported operation: unlinkat(! AT_CWD) against file:%s", path);
+		return orig(dirfd, path, flags);
+	}
+
+	if ((flags & AT_REMOVEDIR) != 0)
+		return rmdir(path);
+	else
+		return unlink(path);
+})
+#endif
 
 WRAP(link, int, (const char *path1, const char *path2), {
 	int ret = orig(path1, path2);

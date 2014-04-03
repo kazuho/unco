@@ -398,24 +398,12 @@ static void on_writeopen_success(const char *path, char *backup, int backup_errn
 	}
 }
 
-#define WRAP(Fn, RetType, Args, Body) \
-extern RetType Fn Args { \
-	static RetType (*orig) Args; \
-	if (orig == NULL) { \
-		orig = (RetType (*) Args)dlsym(RTLD_NEXT, #Fn); \
-	} \
-	do { \
-		Body \
-	} while (0); \
-}
-
-WRAP(open, int, (const char *path, int oflag, ...), {
-	va_list arg;
+static int do_open(int (*orig)(const char *path, int oflag, ...), const char *path, int oflag, mode_t mode)
+{
 	char *backup = NULL;
 	int is_write;
 	int backup_errno;
 	int ret;
-	mode_t mode = 0;
 
 	is_write = (oflag & (O_WRONLY | O_RDWR)) != 0;
 
@@ -428,20 +416,50 @@ WRAP(open, int, (const char *path, int oflag, ...), {
 		}
 	}
 
-	if ((oflag & O_CREAT) != 0) {
-		va_start(arg, oflag);
-		mode = va_arg(arg, int);
-		va_end(arg);
-	}
 	ret = orig(path, oflag, mode);
 
 	if (ret != -1 && is_write)
 		on_writeopen_success(path, backup, backup_errno);
 
 	return ret;
+}
+
+#define WRAP(Fn, RetType, Args, Body) \
+extern RetType Fn Args { \
+	static RetType (*orig) Args; \
+	if (orig == NULL) { \
+		orig = (RetType (*) Args)dlsym(RTLD_NEXT, #Fn); \
+	} \
+	do { \
+		Body \
+	} while (0); \
+}
+#ifdef __linux__
+# define WRAP_OPEN(Fn, RetType, Args, Body) \
+	WRAP(Fn, RetType, Args, Body) \
+	WRAP(Fn ## 64, RetType, Args, Body)
+#else
+# define WRAP_OPEN WRAP
+#endif
+
+WRAP_OPEN(open, int, (const char *path, int oflag, ...), {
+	va_list arg;
+	mode_t mode = 0;
+
+	if ((oflag & O_CREAT) != 0) {
+		va_start(arg, oflag);
+		mode = va_arg(arg, int);
+		va_end(arg);
+	}
+
+	return do_open(orig, path, oflag, mode);
 })
 
-WRAP(fopen, FILE*, (const char *path, const char *mode), {
+WRAP_OPEN(creat, int, (const char *path, mode_t mode), {
+	return do_open(default_open, path, O_CREAT | O_WRONLY | O_TRUNC, mode);
+})
+
+WRAP_OPEN(fopen, FILE*, (const char *path, const char *mode), {
 	char *backup = NULL;
 	int is_write;
 	int backup_errno;
@@ -457,6 +475,19 @@ WRAP(fopen, FILE*, (const char *path, const char *mode), {
 	if (ret != NULL && is_write)
 		on_writeopen_success(path, backup, backup_errno);
 
+	return ret;
+})
+
+WRAP_OPEN(mkstemp, int, (char *template), {
+	int ret;
+
+	ret = orig(template);
+
+	if (ret != -1) {
+		uncolog_write_action_start(&ufp, "create", 1);
+		uncolog_write_argfn(&ufp, template, 1);
+		uncolog_write_action_end(&ufp);
+	}
 	return ret;
 })
 
@@ -533,19 +564,6 @@ WRAP(symlink, int, (const char *path1, const char*path2), {
 	if (ret == 0) {
 		uncolog_write_action_start(&ufp, "symlink", 1);
 		uncolog_write_argfn(&ufp, path2, 0); // we only need the affected fn
-		uncolog_write_action_end(&ufp);
-	}
-	return ret;
-})
-
-WRAP(mkstemp, int, (char *template), {
-	int ret;
-
-	ret = orig(template);
-
-	if (ret != -1) {
-		uncolog_write_action_start(&ufp, "create", 1);
-		uncolog_write_argfn(&ufp, template, 1);
 		uncolog_write_action_end(&ufp);
 	}
 	return ret;

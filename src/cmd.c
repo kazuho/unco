@@ -168,7 +168,7 @@ static int consume_log(const char *logpath, int (*cb)(struct action *action, voi
 	} while (0)
 #define READ_ARGN(dst) \
 	do { \
-		off_t t; \
+		long long t; \
 		if (uncolog_read_argn(ufp, &t) != 0) \
 			goto Exit; \
 		dst = t; \
@@ -343,7 +343,7 @@ static int _finalize_mark_file_in_list(const char *dir, const char *fn, int exis
 	if ((path = ksprintf("%s/%s", dir, fn_encoded)) == NULL)
 		goto Exit;
 
-	if (lstat(path, &st) == 0 != exists) {
+	if ((lstat(path, &st) == 0) != exists) {
 		if (exists) {
 			if (symlink(dir, path) != 0)
 				goto Exit;
@@ -605,8 +605,14 @@ static int do_record(int argc, char **argv)
 	}
 
 	// set environment variables and exec
+#ifdef __linux__
+	setenv("LD_PRELOAD", WITH_LIBDIR "/libunco-preload.so", 1);
+#elif defined(__APPLE__)
 	setenv("DYLD_INSERT_LIBRARIES", WITH_LIBDIR "/libunco-preload.dylib", 1);
 	setenv("DYLD_FORCE_FLAT_NAMESPACE", "YES", 1);
+#else
+# error "unknown env"
+#endif
 	if (log_file != NULL) {
 		setenv("UNCO_LOG", log_file, 1);
 	} else {

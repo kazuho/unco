@@ -21,6 +21,9 @@
  * OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN
  * THE SOFTWARE.
  */
+#ifdef __linux__
+# define _GNU_SOURCE
+#endif
 #include <assert.h>
 #include <dirent.h>
 #include <errno.h>
@@ -29,6 +32,7 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <sys/file.h>
 #include <sys/stat.h>
 #include <unistd.h>
 #include "kazutils.h"
@@ -246,7 +250,7 @@ int uncolog_read_action(struct uncolog_fp *ufp, char *action, int *argc)
 	return 0;
 }
 
-void uncolog_write_argn(struct uncolog_fp *ufp, off_t n)
+void uncolog_write_argn(struct uncolog_fp *ufp, long long n)
 {
 	char buf[32];
 
@@ -254,7 +258,7 @@ void uncolog_write_argn(struct uncolog_fp *ufp, off_t n)
 	safewrite(ufp, buf, strlen(buf));
 }
 
-int uncolog_read_argn(struct uncolog_fp *ufp, off_t *n)
+int uncolog_read_argn(struct uncolog_fp *ufp, long long *n)
 {
 	char buf[256];
 
@@ -277,7 +281,8 @@ void uncolog_write_argbuf(struct uncolog_fp *ufp, const void *data, size_t len)
 
 void *uncolog_read_argbuf(struct uncolog_fp *ufp, size_t *outlen)
 {
-	off_t off, len;
+	off_t off;
+	long long len;
 	char *buf = NULL;
 	ssize_t rlen;
 
@@ -365,17 +370,17 @@ Exit:
 
 void uncolog_write_argfd(struct uncolog_fp *ufp, int fd)
 {
-	char path[PATH_MAX];
+	char *path;
 
 	if (ufp->_fd == -1)
 		return;
 
-	if (fcntl(fd, F_GETPATH, path) == -1) {
-		uncolog_set_error(ufp, errno, "unco:failed to obtain path of file descriptor:%d", fd);
+	if ((path = kgetpath(fd)) == NULL) {
+		uncolog_set_error(ufp, errno, "failed to obtain path of file descriptor:%d\n", fd);
 		return;
 	}
-
 	uncolog_write_argbuf(ufp, path, strlen(path));
+	free(path);
 }
 
 char *uncolog_get_linkname(struct uncolog_fp *ufp)

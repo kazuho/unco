@@ -23,9 +23,11 @@
  */
 #include <dirent.h>
 #include <errno.h>
+#include <fcntl.h>
 #include <stdlib.h>
 #include <string.h>
 #include <sys/stat.h>
+#include <sys/param.h>
 #include <unistd.h>
 #include "kazutils.h"
 
@@ -144,3 +146,40 @@ Exit:
 	free(fnbuf);
 	return ret;
 }
+
+#ifdef __linux__
+char *kgetpath(int fd)
+{
+	char *linkfn, path[PATH_MAX];
+	ssize_t sz;
+	struct stat path_st, fd_st;
+
+	// read the link
+	if ((linkfn = ksprintf("/proc/self/fd/%d", fd)) == NULL)
+		return NULL;
+	sz = readlink(linkfn, path, sizeof(path) - 1);
+	free(linkfn);
+	if (sz == -1)
+		return NULL;
+	path[sz] = '\0';
+
+	// compare inode
+	if (lstat(path, &path_st) != 0
+		|| fstat(fd, &fd_st) != 0)
+		return NULL;
+	if (! (path_st.st_dev == fd_st.st_dev && path_st.st_ino == fd_st.st_ino))
+		return NULL;
+
+	return strdup(path);
+}
+#endif
+
+#ifdef __APPLE__
+char *kgetpath(int fd)
+{
+	char path[PATH_MAX];
+	if (fcntl(fd, F_GETPATH, path) == -1)
+		return NULL;
+	return strdup(path);
+}
+#endif

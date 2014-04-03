@@ -21,6 +21,10 @@
  * OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN
  * THE SOFTWARE.
  */
+#ifdef __linux__
+# define _GNU_SOURCE
+# define _ATFILE_SOURCE
+#endif
 #include <dlfcn.h>
 #include <errno.h>
 #include <fcntl.h>
@@ -32,7 +36,9 @@
 #include <sys/stat.h>
 #include <sys/time.h>
 #include <unistd.h>
-#include <crt_externs.h>
+#ifdef __APPLE__
+# include <crt_externs.h>
+#endif
 #include "kazutils.h"
 #include "unco.h"
 #include "config.h"
@@ -100,8 +106,12 @@ static void spawn_finalizer()
 	uncolog_close(&ufp);
 
 	// unset the preload
+#ifdef __linux__
+	unsetenv("LD_PRELOAD");
+#elif defined(__APPLE__)
 	unsetenv("DYLD_INSERT_LIBRARIES");
 	unsetenv("DYLD_FORCE_FLAT_NAMESPACE");
+#endif
 
 	// exec uncolog _finalize
 	execl(WITH_BINDIR "/unco", "unco", "_finalize", NULL);
@@ -111,20 +121,45 @@ static void spawn_finalizer()
 
 static void log_meta(void)
 {
-	char cmdbuf[4096], **argv, *cwd;
-	int i, argc;
+	char *cwd;
 
 	uncolog_write_action_start(&ufp, "meta", 4);
 
 	// log argv
-	argc = *_NSGetArgc();
-	argv = *_NSGetArgv();
-	cmdbuf[0] = '\0';
-	for (i = 0; i != argc; ++i)
-		snprintf(cmdbuf + strlen(cmdbuf), sizeof(cmdbuf) - strlen(cmdbuf),
-		i == 0 ? "%s" : " %s",
-		argv[i]);
-	uncolog_write_argbuf(&ufp, cmdbuf, strlen(cmdbuf));
+#ifdef __APPLE__
+	do {
+		char cmdbuf[4096], **argv;
+		int i, argc;
+		argc = *_NSGetArgc();
+		argv = *_NSGetArgv();
+		cmdbuf[0] = '\0';
+		for (i = 0; i != argc; ++i)
+			snprintf(cmdbuf + strlen(cmdbuf), sizeof(cmdbuf) - strlen(cmdbuf),
+			i == 0 ? "%s" : " %s",
+			argv[i]);
+		uncolog_write_argbuf(&ufp, cmdbuf, strlen(cmdbuf));
+	} while (0);
+#elif defined(__linux__)
+	do {
+		int fd;
+		char *cmd = NULL;
+		size_t cmdlen, i;
+		if ((fd = open("/proc/self/cmdline", O_RDONLY)) != -1) {
+			cmd = kread_full(fd, &cmdlen);
+			close(fd);
+		}
+		if (cmd != NULL) {
+			for (i = 0; i < cmdlen; ++i)
+				if (cmd[i] == '\0')
+					cmd[i] = ' ';
+			uncolog_write_argbuf(&ufp, cmd, cmdlen);
+		} else {
+			uncolog_write_argbuf(&ufp, "(unknown)", sizeof("(unknown)") - 1);
+		}
+	} while (0);	
+#else
+# error "unknown env"
+#endif
 
 	// log cwd
 	cwd = getcwd(NULL, 0);
@@ -142,9 +177,16 @@ static void log_meta(void)
 
 static int set_uncolog_osx(const char *logfn)
 {
-	// we need to rewrite an existing entry of environ
-	char **env = *_NSGetEnviron();
+	char **env;
 	size_t n;
+
+#ifdef __linux__
+	env = environ;
+#elif defined(__APPLE__)
+	env = *_NSGetEnviron();
+#else
+# error "unknown env"
+#endif
 
 	if (strlen(logfn) >= UNCO_LOG_PATH_MAX) {
 		fprintf(stderr, "log file name is too long:%s\n", logfn);
@@ -293,6 +335,27 @@ Exit:
 	return backup;
 }
 
+#ifdef __linux__
+static char *normalize_atpath(int dirfd, const char *path)
+{
+	char *ret, *dirpath;
+
+	if (path[0] == '/' || dirfd == AT_FDCWD) {
+		if ((ret = strdup(path)) == NULL)
+			uncolog_set_error(&ufp, errno, "unco");
+		return ret;
+	}
+	if ((dirpath = kgetpath(dirfd)) == NULL) {
+		uncolog_set_error(&ufp, 0, "unco:failed to determine path of filedes:%d", dirfd);
+		return NULL;
+	}
+	if ((ret = ksprintf("%s/%s", dirpath, path)) == NULL)
+		uncolog_set_error(&ufp, errno, "unco");
+	free(dirpath);
+	return ret;
+}
+#endif
+
 static char *before_writeopen(const char *path, int *errnum)
 {
 	char *backup = NULL;
@@ -357,6 +420,32 @@ static void on_writeopen_success(const char *path, char *backup, int backup_errn
 	}
 }
 
+static int do_open(int (*orig)(const char *path, int oflag, ...), const char *path, int oflag, mode_t mode)
+{
+	char *backup = NULL;
+	int is_write;
+	int backup_errno;
+	int ret;
+
+	is_write = (oflag & (O_WRONLY | O_RDWR)) != 0;
+
+	if (is_write) {
+		if ((oflag & O_NOFOLLOW) != 0) {
+			uncolog_set_error(&ufp, 0, "unco:unsupported operation: open with O_NOFOLLOW against file:%s", path);
+			backup_errno = 0;
+		} else {
+			backup = before_writeopen(path, &backup_errno);
+		}
+	}
+
+	ret = orig(path, oflag, mode);
+
+	if (ret != -1 && is_write)
+		on_writeopen_success(path, backup, backup_errno);
+
+	return ret;
+}
+
 #define WRAP(Fn, RetType, Args, Body) \
 extern RetType Fn Args { \
 	static RetType (*orig) Args; \
@@ -367,40 +456,32 @@ extern RetType Fn Args { \
 		Body \
 	} while (0); \
 }
+#ifdef __linux__
+# define WRAP_OPEN(Fn, RetType, Args, Body) \
+	WRAP(Fn, RetType, Args, Body) \
+	WRAP(Fn ## 64, RetType, Args, Body)
+#else
+# define WRAP_OPEN WRAP
+#endif
 
-WRAP(open, int, (const char *path, int oflag, ...), {
+WRAP_OPEN(open, int, (const char *path, int oflag, ...), {
 	va_list arg;
-	char *backup = NULL;
-	int is_write;
-	int backup_errno;
-	int ret;
 	mode_t mode = 0;
-
-	is_write = (oflag & (O_WRONLY | O_RDWR)) != 0;
-
-	if (is_write) {
-		if ((oflag & (O_NOFOLLOW | O_SYMLINK)) != 0) {
-			uncolog_set_error(&ufp, 0, "unco:open:cannot handle open with O_NOFOLLOW|O_SYMLINK against file:%s", path);
-			backup_errno = 0;
-		} else {
-			backup = before_writeopen(path, &backup_errno);
-		}
-	}
 
 	if ((oflag & O_CREAT) != 0) {
 		va_start(arg, oflag);
 		mode = va_arg(arg, int);
 		va_end(arg);
 	}
-	ret = orig(path, oflag, mode);
 
-	if (ret != -1 && is_write)
-		on_writeopen_success(path, backup, backup_errno);
-
-	return ret;
+	return do_open(orig, path, oflag, mode);
 })
 
-WRAP(fopen, FILE*, (const char *path, const char *mode), {
+WRAP_OPEN(creat, int, (const char *path, mode_t mode), {
+	return do_open(default_open, path, O_CREAT | O_WRONLY | O_TRUNC, mode);
+})
+
+WRAP_OPEN(fopen, FILE*, (const char *path, const char *mode), {
 	char *backup = NULL;
 	int is_write;
 	int backup_errno;
@@ -416,6 +497,19 @@ WRAP(fopen, FILE*, (const char *path, const char *mode), {
 	if (ret != NULL && is_write)
 		on_writeopen_success(path, backup, backup_errno);
 
+	return ret;
+})
+
+WRAP_OPEN(mkstemp, int, (char *template), {
+	int ret;
+
+	ret = orig(template);
+
+	if (ret != -1) {
+		uncolog_write_action_start(&ufp, "create", 1);
+		uncolog_write_argfn(&ufp, template, 1);
+		uncolog_write_action_end(&ufp);
+	}
 	return ret;
 })
 
@@ -475,6 +569,24 @@ WRAP(unlink, int, (const char *path), {
 	return ret;
 })
 
+#ifdef __linux__
+WRAP(unlinkat, int, (int dirfd, const char *path, int flags), {
+	char *path_normalized;
+	int ret;
+
+	if ((path_normalized = normalize_atpath(dirfd, path)) == NULL)
+		return orig(dirfd, path, flags);
+
+	if ((flags & AT_REMOVEDIR) != 0)
+		ret = rmdir(path_normalized);
+	else
+		ret = unlink(path_normalized);
+
+	free(path_normalized);
+	return ret;
+})
+#endif
+
 WRAP(link, int, (const char *path1, const char *path2), {
 	int ret = orig(path1, path2);
 	if (ret == 0) {
@@ -492,19 +604,6 @@ WRAP(symlink, int, (const char *path1, const char*path2), {
 	if (ret == 0) {
 		uncolog_write_action_start(&ufp, "symlink", 1);
 		uncolog_write_argfn(&ufp, path2, 0); // we only need the affected fn
-		uncolog_write_action_end(&ufp);
-	}
-	return ret;
-})
-
-WRAP(mkstemp, int, (char *template), {
-	int ret;
-
-	ret = orig(template);
-
-	if (ret != -1) {
-		uncolog_write_action_start(&ufp, "create", 1);
-		uncolog_write_argfn(&ufp, template, 1);
 		uncolog_write_action_end(&ufp);
 	}
 	return ret;

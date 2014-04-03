@@ -6,6 +6,8 @@ use warnings;
 use POSIX qw(getcwd);
 use Test::More tests => 3;
 
+my $TAR_CMD = `uname -s` eq "Darwin\n" ? "gnutar" : "tar";
+
 my $TEST_DIR = "/tmp/unco-test";
 my $TEST_CWD = "$TEST_DIR/root";
 my $WAIT = $ENV{UNCO_TEST_WAIT} || 0;
@@ -58,11 +60,11 @@ is create_sig(), $sig_post_init, "re_undo-vs-post-init";
 
 
 sub create_sig {
-	open my $fh, "-|", "gnutar cf - *"
+	open my $fh, "-|", "$TAR_CMD cf - *"
 		or die "popen failed:$!";
 	my $sig = join "", <$fh>;
 	close $fh;
-	die "gnutar failed:$?"
+	die "$TAR_CMD failed:$?"
 		if $? != 0;
 	$sig;
 }

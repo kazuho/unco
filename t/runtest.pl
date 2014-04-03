@@ -6,7 +6,7 @@ use warnings;
 use POSIX qw(getcwd);
 use Test::More tests => 3;
 
-my $TAR_CMD = `uname -s` eq 'Darwin' ? "gnutar" : "tar";
+my $TAR_CMD = `uname -s` eq "Darwin\n" ? "gnutar" : "tar";
 
 my $TEST_DIR = "/tmp/unco-test";
 my $TEST_CWD = "$TEST_DIR/root";

@@ -239,6 +239,12 @@ static int consume_log(const char *logpath, int (*cb)(struct action *action, voi
 			action.type = ACTION_CHMOD;
 			READ_ARGSTR(action.chmod.path);
 			READ_ARGN(action.chmod.prev_mode);
+		} else if (strcmp(name, "lchown") == 0) {
+			assert(action.argc == 3);
+			action.type = ACTION_LCHOWN;
+			READ_ARGSTR(action.lchown.path);
+			READ_ARGN(action.lchown.prev_owner);
+			READ_ARGN(action.lchown.prev_group);
 		} else if (strcmp(name, "finalize_filehash") == 0) {
 			assert(action.argc == 2);
 			action.type = ACTION_FINALIZE_FILEHASH;

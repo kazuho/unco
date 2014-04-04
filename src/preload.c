@@ -490,7 +490,6 @@ static void after_mkdir(int ret, const char *path)
 {
 	char *path_normalized;
 
-	// FIXME save mode as well (note: we cannot use 2nd arg of mkdir, since the result is affected by umask)
 	if (ret == 0) {
 		if ((path_normalized = strip_trailing_slashes(path)) != NULL) {
 			uncolog_write_action_start(&ufp, "mkdir", 1);

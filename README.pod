@@ -58,10 +58,10 @@ Displays the list of recorded commands with their associated indices.
 
 =head2 unco undo
 
- % unco undo [--print] <index>
+ % unco undo [--print] <index_or_path>
 
-Undoes a recorded change.  The index is the number displayed by
-L</unco history>.
+Undoes a recorded change.  The argument is the index number displayed by
+L</unco history> or path pointing to a unco record.
 
 =head3 --print
 
@@ -69,10 +69,10 @@ displays the changes to be performed instead of actually applying them
 
 =head2 unco redo
 
- % unco redo [--print] <index>
+ % unco redo [--print] <index_or_path>
 
 Redoes a recorded change that has been undone.  The index is the number
-displayed by L</unco history>.
+displayed by L</unco history> or path pointing to a unco record.
 
 =head1 AUTHOR
 

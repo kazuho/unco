@@ -76,7 +76,7 @@ displayed by L</unco history>.
 
 =head1 AUTHOR
 
-Kazuho Oku
+Kazuho Oku L<https://github.com/kazuho/>
 
 =head1 LICENSE
 

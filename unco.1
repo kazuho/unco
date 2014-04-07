@@ -186,10 +186,28 @@ behavior is truncate)
 .SS "unco history"
 .IX Subsection "unco history"
 .Vb 1
-\& % unco history
+\& % unco history [\-\-ppid=<pid>] [\-\-cmd=<cmd>] [\-\-cwd=<dir>]
 .Ve
 .PP
 Displays the list of recorded commands with their associated indices.
+.PP
+\fI\-\-ppid=<pid>\fR
+.IX Subsection "--ppid=<pid>"
+.PP
+filters the output to commands that were spawned by given process id.  If
+omitted, the default value is the process id that spawned the history command,
+so that only the records belonging to the current shell are being displayed.
+Set \-1 as the argument to display all records.
+.PP
+\fI\-\-cmd=<cmd>\fR
+.IX Subsection "--cmd=<cmd>"
+.PP
+filters the output to commands starting with given prefix
+.PP
+\fI\-\-cwd=<cwd>\fR
+.IX Subsection "--cwd=<cwd>"
+.PP
+filters the output to commands that were spawn under given working directory
 .SS "unco undo"
 .IX Subsection "unco undo"
 .Vb 1

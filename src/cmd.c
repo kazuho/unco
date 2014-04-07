@@ -1034,7 +1034,7 @@ Exit:
 struct history_info {
 	int logindex;
 	char *logfn;
-	pid_t grep_ppid; // -1 if not filtered
+	int grep_ppid; // -1 if not filtered
 	char *grep_cmd; // NULL if not filtered
 	char *grep_cwd; // NULL if not filtered
 };
@@ -1062,7 +1062,7 @@ static int _history_action_handler(struct action *action, void *cb_arg)
 			}
 			undone = stat(undo_logfn, &st) == 0;
 			free(undo_logfn);
-			printf("%6d %c %s", info->logindex, undone ? '*' : ' ', action->meta.cmd);
+			printf("%6d %c %s  (cwd:%s)", info->logindex, undone ? '*' : ' ', action->meta.cmd, action->meta.cwd);
 			printf("\n");
 		}
 		return -1; // bail-out
@@ -1073,16 +1073,42 @@ static int _history_action_handler(struct action *action, void *cb_arg)
 
 static int do_history(int argc, char **argv)
 {
+	static struct option longopts[] = {
+		{ "ppid", required_argument, NULL, 'p' },
+		{ "cwd", required_argument, NULL, 'd' },
+		{ "cmd", required_argument, NULL, 'c' },
+		{ NULL }
+	};
 	char *unco_dir, *logfn = NULL;
-	int logindex;
+	int logindex, opt_ch;
 	struct stat st;
 	struct history_info info;
+
+	memset(&info, 0, sizeof(info));
+	info.grep_ppid = getppid(); // default rule
+
+	while ((opt_ch = getopt_long(argc + 1, argv - 1, "p:d:c:", longopts, NULL)) != -1) {
+		switch (opt_ch) {
+		case 'p':
+			if (sscanf(optarg, "%d", &info.grep_ppid) != 1) {
+				fprintf(stderr, "argument to --ppid should be a number\n");
+				return EX_USAGE;
+			}
+			break;
+		case 'd':
+			info.grep_cwd = optarg;
+			break;
+		case 'c':
+			info.grep_cmd = optarg;
+			break;
+		default:
+			return EX_USAGE;
+		}
+	}
 
 	if ((unco_dir = unco_get_default_dir(mkdir)) == NULL)
 		return EX_OSERR;
 
-	memset(&info, 0, sizeof(info));
-	info.grep_ppid = getppid(); // default rule
 
 	// TODO getopt
 

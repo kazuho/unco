@@ -52,9 +52,24 @@ behavior is truncate)
 
 =head2 unco history
 
- % unco history
+ % unco history [--ppid=<pid>] [--cmd=<cmd>] [--cwd=<dir>]
 
 Displays the list of recorded commands with their associated indices.
+
+=head3 --ppid=<pid>
+
+filters the output to commands that were spawned by given process id.  If
+omitted, the default value is the process id that spawned the history command,
+so that only the records belonging to the current shell are being displayed.
+Set -1 as the argument to display all records.
+
+=head3 --cmd=<cmd>
+
+filters the output to commands starting with given prefix
+
+=head3 --cwd=<cwd>
+
+filters the output to commands that were spawn under given working directory
 
 =head2 unco undo
 

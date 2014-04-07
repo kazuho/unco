@@ -2,7 +2,7 @@ CMAKE_MINIMUM_REQUIRED(VERSION 2.4)
 
 PROJECT(unco)
 
-SET(serial "0.1.0")
+SET(serial "0.2.0")
 SET(soserial "1")
 SET(CMAKE_C_FLAGS "${CMAKE_C_FLAGS} -Wall -g")
 SET(BINDIR_REL "bin")

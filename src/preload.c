@@ -486,11 +486,11 @@ static void after_symlink(int ret, const char *path2)
 	}
 }
 
-static void after_mkdir(int ret, const char *path)
+static void after_mkdir(int success, const char *path)
 {
 	char *path_normalized;
 
-	if (ret == 0) {
+	if (success) {
 		if ((path_normalized = strip_trailing_slashes(path)) != NULL) {
 			uncolog_write_action_start(&ufp, "mkdir", 1);
 			uncolog_write_argfn(&ufp, path_normalized, 0);
@@ -722,7 +722,13 @@ WRAP(symlink, int, (const char *path1, const char*path2), {
 
 WRAP(mkdir, int, (const char *path, mode_t mode), {
 	int ret = orig(path, mode);
-	after_mkdir(ret, path);
+	after_mkdir(ret == 0, path);
+	return ret;
+})
+
+WRAP(mkdtemp, char *, (char *template), {
+	char *ret = orig(template);
+	after_mkdir(ret != NULL, template);
 	return ret;
 })
 

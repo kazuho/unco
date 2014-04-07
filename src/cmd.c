@@ -1150,32 +1150,14 @@ static int do_finalize()
 	return finalize(logfn);
 }
 
-static int help(int retval)
-{
-	printf(
-	    "unco version " UNCO_VERSION "\n"
-		"\n"
-		"SYNOPSIS:\n"
-		"\n"
-		"    # records changes to fs made by command\n"
-		"    unco record command...\n"
-		"\n"
-		"    # displays list of the recorded commands\n"
-		"    unco history\n"
-		"\n"
-		"    # undoes the changes specified by the index\n"
-		"    unco undo <index>\n"
-		"\n");
-
-	return retval;
-}
-
 int main(int argc, char **argv)
 {
 	const char *cmd;
 
-	if (argc == 1)
-		return help(0);
+	if (argc == 1) {
+		fprintf(stderr, "unco:no command; see \"man unco\"\n");
+		return EX_USAGE;
+	}
 
 	// determine the subcommand handler
 	argv++, argc--;
@@ -1190,8 +1172,12 @@ int main(int argc, char **argv)
 		return do_history(argc, argv);
 	else if (strcmp(cmd, "_finalize") == 0)
 		return do_finalize();
-	else if (strcmp(cmd, "help") == 0)
-		return help(0);
-	else
-		return help(EX_USAGE);
+	else if (strcmp(cmd, "help") == 0) {
+		execlp("man", "man", "unco", NULL);
+		perror("failed to exec:man");
+		return EX_OSERR;
+	}
+
+	fprintf(stderr, "unco:unknown command:%s\n", cmd);
+	return EX_USAGE;
 }

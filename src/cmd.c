@@ -1162,17 +1162,20 @@ int main(int argc, char **argv)
 	// determine the subcommand handler
 	argv++, argc--;
 	cmd = *argv++, argc--;
-	if (strcmp(cmd, "record") == 0)
+	if (strcmp(cmd, "record") == 0) {
 		return do_record(argc, argv);
-	else if (strcmp(cmd, "undo") == 0)
+	} else if (strcmp(cmd, "undo") == 0) {
 		return do_revert(argc, argv, 0);
-	else if (strcmp(cmd, "redo") == 0)
+	} else if (strcmp(cmd, "redo") == 0) {
 		return do_revert(argc, argv, 1);
-	else if (strcmp(cmd, "history") == 0)
+	} else if (strcmp(cmd, "history") == 0) {
 		return do_history(argc, argv);
-	else if (strcmp(cmd, "_finalize") == 0)
+	} else if (strcmp(cmd, "_finalize") == 0) {
 		return do_finalize();
-	else if (strcmp(cmd, "help") == 0) {
+	} else if (strcmp(cmd, "version") == 0 || strcmp(cmd, "--version") == 0) {
+		fputs(UNCO_VERSION "\n", stdout);
+		return 0;
+	} else if (strcmp(cmd, "help") == 0 || strcmp(cmd, "--help") == 0) {
 		execlp("man", "man", "unco", NULL);
 		perror("failed to exec:man");
 		return EX_OSERR;

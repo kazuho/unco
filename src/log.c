@@ -183,7 +183,7 @@ int uncolog_open(struct uncolog_fp *ufp, const char *path, int mode, int (*defau
 
 int uncolog_close(struct uncolog_fp *ufp)
 {
-	if (ufp->_fd != -1)
+	if (ufp->_fd == -1)
 		return 0;
 
 	close(ufp->_fd);

@@ -222,7 +222,7 @@ extern void _setup_unco_preload()
 {
 	char *logfn, *env, *dir = NULL, *fnbuf = NULL;
 	long long log_index;
-	int open_mode;
+	int dirlock_fd = -1;
 
 	// load default handlers
 	default_open = (int (*)(const char*, int, ...))dlsym(RTLD_NEXT, "open");
@@ -234,7 +234,7 @@ extern void _setup_unco_preload()
 	default_rmdir = (int (*)(const char *))dlsym(RTLD_NEXT, "rmdir");
 	default_chown = (int (*)(const char *, uid_t, gid_t))dlsym(RTLD_NEXT, "chown");
 
-	// determine the filename
+	// open the log file
 	if ((env = getenv("UNCO_LOG")) != NULL) {
 		if (env[0] == '/') {
 			logfn = env;
@@ -249,11 +249,23 @@ extern void _setup_unco_preload()
 			}
 			logfn = fnbuf;
 		}
-		open_mode = 'a';
+		uncolog_open(&ufp, logfn, 'a', default_open, default_mkdir);
 	} else {
-		// default
+		// no path given; create a new entry in the default dir
 		if ((dir = unco_get_default_dir(default_mkdir)) == NULL)
 			goto Error;
+		// lock the directory
+		if ((fnbuf = ksprintf("%s/lock", dir)) == NULL) {
+			perror("unco");
+			goto Error;
+		}
+		if ((dirlock_fd = default_open(fnbuf, O_WRONLY | O_CREAT | O_TRUNC | O_EXLOCK, 0600)) == -1) {
+			kerr_printf("failed to open file:%s", fnbuf);
+			goto Error;
+		}
+		free(fnbuf);
+		fnbuf = NULL;
+		// obtain logindex
 		if ((log_index = unco_get_next_logindex(dir)) == -1)
 			goto Error;
 		if ((fnbuf = ksprintf("%s/%lld", dir, log_index)) == NULL) {
@@ -268,22 +280,25 @@ extern void _setup_unco_preload()
 #else
 		setenv("UNCO_LOG", logfn, 1);
 #endif
-		open_mode = 'w';
-	}
-
-	// open the log
-	uncolog_open(&ufp, logfn, open_mode, default_open, default_mkdir);
-
-	// setup procedures for a new log
-	if (open_mode == 'w' && uncolog_get_fd(&ufp) != -1) {
-		log_meta();
-		spawn_finalizer();
+		// open the log
+		uncolog_open(&ufp, logfn, 'w', default_open, default_mkdir);
+		// unlock the directory
+		close(dirlock_fd);
+		dirlock_fd = -1;
+		// append meta
+		if (uncolog_get_fd(&ufp) != -1) {
+			// setup procedures for a new log
+			log_meta();
+			spawn_finalizer();
+		}
 	}
 
 	free(dir);
 	free(fnbuf);
 	return;
 Error:
+	if (dirlock_fd != -1)
+		close(dirlock_fd);
 	free(dir);
 	free(fnbuf);
 	uncolog_init_fp(&ufp);

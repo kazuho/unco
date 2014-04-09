@@ -76,7 +76,7 @@ char *kgetpath(int fd);
 	} while (0)
 #define KFREE_PTRS_PUSH(p) (_kfree_ptrs[_kfree_ptr_index++] = (p))
 
-#define kerr_printf(fmt, ...) (fprintf(stderr, fmt, __VA_ARGS__), perror(""))
+#define kerr_printf(fmt, ...) (fprintf(stderr, fmt, __VA_ARGS__), fputc(':', stderr), perror(""))
 
 #ifdef __cplusplus
 }

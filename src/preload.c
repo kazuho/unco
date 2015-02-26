@@ -36,6 +36,9 @@
 #include <sys/stat.h>
 #include <sys/time.h>
 #include <unistd.h>
+#ifdef __linux__
+#include <sys/file.h>
+#endif
 #ifdef __APPLE__
 # include <crt_externs.h>
 #endif
@@ -222,7 +225,7 @@ extern void _setup_unco_preload()
 {
 	char *logfn, *env, *dir = NULL, *fnbuf = NULL;
 	long long log_index;
-	int dirlock_fd = -1;
+	int dirlock_fd = -1, ret;
 
 	// load default handlers
 	default_open = (int (*)(const char*, int, ...))dlsym(RTLD_NEXT, "open");
@@ -259,8 +262,14 @@ extern void _setup_unco_preload()
 			perror("unco");
 			goto Error;
 		}
-		if ((dirlock_fd = default_open(fnbuf, O_WRONLY | O_CREAT | O_TRUNC | O_EXLOCK, 0600)) == -1) {
+		if ((dirlock_fd = default_open(fnbuf, O_WRONLY | O_CREAT | O_TRUNC, 0600)) == -1) {
 			kerr_printf("failed to open file:%s", fnbuf);
+			goto Error;
+		}
+		while ((ret = flock(dirlock_fd, LOCK_EX)) == -1 && errno == EINTR)
+			;
+		if (ret == -1) {
+			kerr_printf("failed to lock file:%s", fnbuf);
 			goto Error;
 		}
 		free(fnbuf);

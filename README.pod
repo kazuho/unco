@@ -22,7 +22,7 @@ Unco is a wrapper program that records the changes made to files by programs so
 that they can be undone laterwards.
 
 It uses a technique called library preloading (for more information consult the
-linux documents with keyword LD_PROLOAD, or os x document with keyword
+linux documents with keyword LD_PRELOAD, or os x document with keyword
 DYLD_INSERT_LIBRARIES) to trap the library calls that affect the files, and
 records the changes made by the programs being executed.
 

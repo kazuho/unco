@@ -14,7 +14,7 @@ Unco - undo any command
  % unco undo <index>
 
  # redo a recorded change
- % undo redo <index>
+ % unco redo <index>
 
 =head1 DESCRIPTION
 
